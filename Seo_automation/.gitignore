@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Credentials & Tokens
+.env
+.env.local
+.env.*.local
+config/credentials.json
+storage/credentials/
+storage/user_profiles/
+storage/brand_assets/
+*.json
+!config/llm_config.json
+!config/app_config.json
+
+# Data files
+storage/raw_data/
+storage/processed_data/
+storage/sessions/
+*.csv
+*.xlsx
+
+# Uploads
+uploads/
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,20 @@
+{
+  "mode": "cli",
+  "default_date_range_days": 90,
+  "max_keywords_per_batch": 25,
+  "enable_logging": true,
+  "log_level": "INFO",
+  "onboarding": {
+    "max_products": 10,
+    "max_services": 10,
+    "max_differentiators": 5,
+    "max_competitors": 10,
+    "required_pages": [
+      "home",
+      "product",
+      "contact",
+      "about",
+      "blog"
+    ]
+  }
+}

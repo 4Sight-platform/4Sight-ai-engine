@@ -1,0 +1,10 @@
+{
+  "model": "gemini-2.5-flash",
+  "temperature": 0.3,
+  "max_tokens": 2000,
+  "keyword_generation": {
+    "system_prompt": "You are an SEO expert specializing in keyword research and search intent analysis.",
+    "max_keywords": 30,
+    "min_keywords": 20
+  }
+}

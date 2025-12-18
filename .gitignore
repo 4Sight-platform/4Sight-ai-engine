@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Credentials & API Keys - CRITICAL
+**/.env
+**/.env.local
+**/.env.*.local
+**/credentials.json
+**/config/credentials.json
+**/*_credentials.json
+**/*_token.json
+**/*_tokens.json
+
+# Storage directories with sensitive data
+**/storage/credentials/
+**/storage/user_profiles/
+**/storage/brand_assets/
+**/storage/raw_data/
+**/storage/processed_data/
+**/storage/sessions/
+**/storage/tokens/
+**/storage/properties/
+
+# Data files
+*.csv
+*.xlsx
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads
+uploads/
+**/uploads/
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.gif
+*.webp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+
+# Logs
+*.log
+logs/
+**/logs/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints
