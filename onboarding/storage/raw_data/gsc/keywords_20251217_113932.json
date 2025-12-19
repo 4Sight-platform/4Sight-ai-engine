@@ -1,0 +1,15 @@
+{
+  "site_url": "https://ursdigitally.com/",
+  "fetch_time": "2025-12-17T11:39:32.781150",
+  "date_range": {
+    "start": "2025-09-18",
+    "end": "2025-12-17"
+  },
+  "keywords": {
+    "Digital Marketing Agencies Kolkata": {
+      "keyword": "Digital Marketing Agencies Kolkata",
+      "error": "'Resource' object has no attribute 'searchAnalytics'",
+      "has_data": false
+    }
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "user_id": "user_5542ba2acc74",
+  "workflow_started_at": "2025-12-18T09:16:48.685688",
+  "current_phase": null,
+  "completed_phases": [
+    "phase1_tuning",
+    "phase2_market",
+    "phase3_gsc"
+  ],
+  "phase_outputs": {
+    "phase1_tuning": {
+      "phase_name": "phase1_tuning",
+      "success": true,
+      "data": {
+        "final_keywords": [
+          "hire digital marketing expert Kolkata",
+          "digital marketing agency Kolkata",
+          "social media marketing Kolkata",
+          "performance marketing agency Kolkata",
+          "best digital marketing agency in Kolkata",
+          "digital platform development Kolkata",
+          "LinkedIn marketing services Kolkata",
+          "SEO services Kolkata"
+        ],
+        "removed_keywords": [],
+        "added_keywords": [],
+        "refinement_notes": ""
+      },
+      "error": null,
+      "completed_at": "2025-12-18T09:17:01.657834"
+    },
+    "phase2_market": {
+      "phase_name": "phase2_market",
+      "success": true,
+      "data": {
+        "keyword_data": [
+          {
+            "keyword": "hire digital marketing expert Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "digital marketing agency Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "social media marketing Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "performance marketing agency Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "best digital marketing agency in Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "digital platform development Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "LinkedIn marketing services Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          },
+          {
+            "keyword": "SEO services Kolkata",
+            "avg_monthly_searches": 1000,
+            "competition": "MEDIUM",
+            "low_top_of_page_bid_micros": 1000000,
+            "high_top_of_page_bid_micros": 3000000
+          }
+        ],
+        "total_keywords": 8,
+        "avg_search_volume": 1000.0
+      },
+      "error": null,
+      "completed_at": "2025-12-18T09:17:01.659709"
+    },
+    "phase3_gsc": {
+      "phase_name": "phase3_gsc",
+      "success": false,
+      "data": {},
+      "error": "GSCClient.__init__() missing 1 required positional argument: 'credentials'",
+      "completed_at": "2025-12-18T09:17:01.665626"
+    }
+  },
+  "initial_keywords": [
+    "hire digital marketing expert Kolkata",
+    "digital marketing agency Kolkata",
+    "social media marketing Kolkata",
+    "performance marketing agency Kolkata",
+    "best digital marketing agency in Kolkata",
+    "digital platform development Kolkata",
+    "LinkedIn marketing services Kolkata",
+    "SEO services Kolkata"
+  ],
+  "profile": {
+    "user_id": "user_5542ba2acc74",
+    "created_at": "2025-12-18T09:03:36.232652",
+    "updated_at": "2025-12-18T09:16:48.683922",
+    "onboarding_completed": true,
+    "current_page": 1,
+    "business_name": "URS Digitally",
+    "website_url": "https://ursdigitally.com/",
+    "business_description": "Strategy-driven, transparent, result-oriented, and client-focused UrsDigitally is recognized as the best digital marketing agency in Kolkata. We believe in crafting customized strategies to meet your business goals. Our transparency means regular updates and access to a project management system, empowering you to track every stage of your project\u2019s progress and make informed decisions. With our expertise in both traditional marketing and cutting-edge digital solutions, we deliver campaigns that",
+    "gsc_connected": true,
+    "location_scope": "regional",
+    "selected_locations": [
+      "Kolkata"
+    ],
+    "customer_description": "",
+    "search_intent": [
+      "comparison",
+      "action-focused"
+    ],
+    "products": [
+      "MARKETING STRATEGY & CONSULTATION",
+      "SOCIAL MEDIA MARKETING",
+      "PERFORMANCE MARKETING",
+      "LINKEDIN MARKETING",
+      "SEARCH ENGINE OPTIMIZATION",
+      "DIGITAL SHOOT-BASED",
+      "CAMPAIGNS",
+      "DIGITAL PLATFORM DEVELOPMENT"
+    ],
+    "services": [],
+    "differentiators": [],
+    "seo_goals": [
+      "organic_traffic",
+      "search_visibility",
+      "local_visibility",
+      "top_rankings"
+    ],
+    "page_urls": {
+      "home": "https://ursdigitally.com/",
+      "product": "https://ursdigitally.com/digital-strategy/",
+      "contact": "https://ursdigitally.com/contact-us/",
+      "about": "https://ursdigitally.com/brand-story/",
+      "blog": "https://ursdigitally.com/blogs/"
+    },
+    "reporting_channels": [
+      "email",
+      "dashboard"
+    ],
+    "email_addresses": [
+      "4sight.platform@gmail.com"
+    ],
+    "report_frequency": "weekly",
+    "completed_at": "2025-12-18T09:16:48.683349"
+  },
+  "workflow_status": "failed",
+  "phase1_tuning_started_at": "2025-12-18T09:16:48.687900",
+  "phase1_tuning_completed_at": "2025-12-18T09:17:01.657852",
+  "phase2_market_started_at": "2025-12-18T09:17:01.658441",
+  "phase2_market_completed_at": "2025-12-18T09:17:01.659720",
+  "phase3_gsc_started_at": "2025-12-18T09:17:01.660304",
+  "phase3_gsc_completed_at": "2025-12-18T09:17:01.665648",
+  "workflow_failed_at": "2025-12-18T09:17:01.666319",
+  "error": "Failed at phase3_gsc"
+}

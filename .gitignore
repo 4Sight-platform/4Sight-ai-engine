@@ -23,16 +23,6 @@ venv.bak/
 **/*_token.json
 **/*_tokens.json
 
-# Storage directories with sensitive data
-**/storage/credentials/
-**/storage/user_profiles/
-**/storage/brand_assets/
-**/storage/raw_data/
-**/storage/processed_data/
-**/storage/sessions/
-**/storage/tokens/
-**/storage/properties/
-
 # Data files
 *.csv
 *.xlsx

@@ -1,0 +1,59 @@
+{
+  "user_id": "user_845a47ff8b85",
+  "created_at": "2025-12-18T10:57:15.343127",
+  "updated_at": "2025-12-18T10:57:33.558709",
+  "onboarding_completed": true,
+  "current_page": 1,
+  "business_name": "URSDigitally",
+  "website_url": "https://ursdigitally.com/",
+  "business_description": "Strategy-driven, transparent, result-oriented, and client-focused UrsDigitally is recognized as the best digital marketing agency in Kolkata.",
+  "gsc_connected": true,
+  "location_scope": "regional",
+  "selected_locations": [
+    "Kolkata"
+  ],
+  "customer_description": "Small, mid level start ups",
+  "search_intent": [
+    "comparison",
+    "action-focused"
+  ],
+  "products": [
+    "Digital Marketing Strategy",
+    "Retail Consulting",
+    "Mystery Audit",
+    "Store Improvement Program"
+  ],
+  "services": [
+    "Marketing Strategy & Consultation",
+    "Digital Marketing",
+    "Retail Consulting",
+    "Staff Training & Performance Improvement"
+  ],
+  "differentiators": [
+    "10+ years corporate experience",
+    "Deep domain expertise in Manufacturing, Retail, Hospitality, Healthcare",
+    "Strategy-Driven, Technology-Enabled approach"
+  ],
+  "seo_goals": [
+    "organic_traffic",
+    "search_visibility",
+    "local_visibility",
+    "top_rankings"
+  ],
+  "page_urls": {
+    "home": "https://ursdigitally.com/",
+    "product": "https://ursdigitally.com/digital-strategy/",
+    "contact": "https://ursdigitally.com/contact-us/",
+    "about": "https://ursdigitally.com/brand-story/",
+    "blog": "https://ursdigitally.com/blogs/"
+  },
+  "reporting_channels": [
+    "email",
+    "dashboard"
+  ],
+  "email_addresses": [
+    "4sight.platform@gmail.com"
+  ],
+  "report_frequency": "weekly",
+  "completed_at": "2025-12-18T10:57:33.504592"
+}
