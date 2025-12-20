@@ -204,6 +204,49 @@ async def check_oauth_status(user_id: str):
         )
 
 
+@api_router.get(
+    "/oauth/refresh/{user_id}",
+    summary="Refresh Access Token",
+    description="Get a fresh access token using stored refresh token"
+)
+async def refresh_access_token(user_id: str):
+    """
+    Use stored refresh token to get a new access token.
+    
+    Returns:
+        - access_token: Fresh access token for API calls
+    """
+    try:
+        if not oauth_manager.has_valid_credentials(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No stored credentials for this user. Please authenticate first."
+            )
+        
+        access_token = await oauth_manager.refresh_access_token(user_id)
+        
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Failed to refresh token. Please re-authenticate."
+            )
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "access_token": access_token
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error refreshing access token: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to refresh access token: {str(e)}"
+        )
+
+
 # ==================== Onboarding Endpoints ====================
 
 @api_router.post(
