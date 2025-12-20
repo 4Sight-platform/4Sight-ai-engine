@@ -32,12 +32,20 @@ class Settings(BaseSettings):
     # Google OAuth Settings (Add actual values in .env or environment variables)
     GOOGLE_CLIENT_ID: str = "YOUR_GOOGLE_CLIENT_ID"
     GOOGLE_CLIENT_SECRET: str = "YOUR_GOOGLE_CLIENT_SECRET"
-    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/oauth/callback"
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8001/api/v1/oauth/callback"
     
     # Encryption key for token storage (Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
     ENCRYPTION_KEY: str = "YOUR_FERNET_ENCRYPTION_KEY"
     
-    model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
+    # Google Custom Search Engine (Optional - for future features)
+    GOOGLE_CSE_API_KEY: str = ""
+    GOOGLE_CSE_CX: str = ""
+    
+    model_config = SettingsConfigDict(
+        case_sensitive=True, 
+        env_file=".env",
+        extra="ignore"  # Ignore extra fields in .env file
+    )
 
 
 settings = Settings()

@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import APIRouter, HTTPException, status
+from starlette.responses import HTMLResponse
 import logging
 
 from base_requests import (
@@ -46,13 +47,17 @@ api_router = APIRouter(tags=["Platform Services"])
     summary="Step 1: Get Google OAuth URL",
     description="Returns the Google authorization URL to redirect the user to"
 )
-async def get_oauth_url():
+async def get_oauth_url(user_id: str = None):
     """
     Generate Google OAuth authorization URL.
     Frontend should redirect user to this URL.
+    
+    Args:
+        user_id: Optional user ID to include in state for callback
     """
     try:
-        auth_url = oauth_manager.get_authorization_url()
+        # Pass user_id as state parameter so we can retrieve it in callback
+        auth_url = oauth_manager.get_authorization_url(state=user_id)
         
         return {
             "status": "success",
@@ -72,27 +77,51 @@ async def get_oauth_url():
     summary="Step 2: OAuth Callback",
     description="Receives authorization code from Google and exchanges for tokens"
 )
-async def oauth_callback(code: str, user_id: str):
+async def oauth_callback(code: str, state: str = None):
     """
     Handle OAuth callback from Google.
     
     Query params:
         code: Authorization code from Google
-        user_id: User ID to associate tokens with
+        state: Contains user_id passed during authorization
     
     This endpoint:
     1. Exchanges code for access_token + refresh_token
     2. Stores encrypted refresh_token
-    3. Returns access_token for immediate validation
+    3. Returns HTML page that sends data to parent window
     """
     try:
+        # Extract user_id from state parameter
+        user_id = state
+        
+        if not user_id:
+            logger.error("[OAuth] No user_id in state parameter")
+            return HTMLResponse(content="""
+            <html>
+            <body>
+                <script>
+                    window.opener.postMessage({type: 'OAUTH_ERROR', error: 'Missing user ID'}, '*');
+                    window.close();
+                </script>
+                <p>Error: Missing user ID. This window will close.</p>
+            </body>
+            </html>
+            """)
+        
         logger.info(f"[OAuth] Received callback for user: {user_id}")
         
         if not code:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing authorization code"
-            )
+            return HTMLResponse(content="""
+            <html>
+            <body>
+                <script>
+                    window.opener.postMessage({type: 'OAUTH_ERROR', error: 'Missing authorization code'}, '*');
+                    window.close();
+                </script>
+                <p>Error: Missing authorization code. This window will close.</p>
+            </body>
+            </html>
+            """)
         
         # Exchange code for tokens
         token_data = await oauth_manager.exchange_code_for_tokens(code)
@@ -100,23 +129,48 @@ async def oauth_callback(code: str, user_id: str):
         # Store refresh token (encrypted)
         oauth_manager.store_tokens(user_id, token_data)
         
-        # Return access token for immediate use
-        return {
-            "status": "success",
-            "message": "Authentication successful",
-            "user_id": user_id,
-            "access_token": token_data.get("access_token"),
-            "expires_in": token_data.get("expires_in", 3600)
-        }
+        access_token = token_data.get("access_token", "")
+        expires_in = token_data.get("expires_in", 3600)
         
-    except HTTPException as he:
-        raise he
+        # Return HTML that sends data to parent window via postMessage
+        return HTMLResponse(content=f"""
+        <html>
+        <body>
+            <script>
+                window.opener.postMessage({{
+                    type: 'OAUTH_SUCCESS',
+                    user_id: '{user_id}',
+                    access_token: '{access_token}',
+                    expires_in: {expires_in}
+                }}, '*');
+                setTimeout(() => window.close(), 500);
+            </script>
+            <div style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: #10b981;">✓ Authentication Successful!</h2>
+                <p>This window will close automatically...</p>
+            </div>
+        </body>
+        </html>
+        """)
+        
     except Exception as e:
         logger.error(f"OAuth callback error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"OAuth callback failed: {str(e)}"
-        )
+        error_message = str(e).replace("'", "\\'")
+        return HTMLResponse(content=f"""
+        <html>
+        <body>
+            <script>
+                window.opener.postMessage({{type: 'OAUTH_ERROR', error: '{error_message}'}}, '*');
+                setTimeout(() => window.close(), 2000);
+            </script>
+            <div style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: #ef4444;">✗ Authentication Failed</h2>
+                <p>{error_message}</p>
+                <p>This window will close automatically...</p>
+            </div>
+        </body>
+        </html>
+        """)
 
 
 @api_router.get(
