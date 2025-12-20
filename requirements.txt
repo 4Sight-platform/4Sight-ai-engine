@@ -1,5 +1,6 @@
 # Core dependencies
 google-api-python-client==2.108.0
+google-auth>=2.27.0
 google-auth-httplib2==0.1.1
 google-auth-oauthlib==1.2.0
 oauth2client==4.1.3
@@ -14,12 +15,21 @@ google-genai
 pandas==2.1.4
 pydantic==2.5.3
 pydantic[email]==2.5.3
+pydantic-settings>=2.1.0
 
 # API (FastAPI)
 fastapi==0.109.0
 uvicorn==0.27.0
 python-multipart==0.0.6  # For file uploads
-pydantic_settings
+
+# HTTP clients
+httpx>=0.26.0  # For async HTTP (from Tester/GAPOC)
+requests==2.31.0
+
+# Security & Auth (from Tester)
+cryptography>=41.0.0  # For Fernet encryption in oauth_manager
+pyjwt>=2.8.0  # JWT tokens (from GAPOC)
+itsdangerous>=2.1.2  # Security utilities (from GAPOC)
 
 # CLI
 rich==13.7.0
@@ -27,8 +37,12 @@ click==8.1.7
 
 # Utilities
 python-dotenv==1.0.0
-requests==2.31.0
 beautifulsoup4==4.12.2
+jinja2>=3.1.3  # Template engine (from GAPOC)
 
 # Image processing (for logo uploads)
 Pillow==10.1.0
+
+# Testing (from Tester)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

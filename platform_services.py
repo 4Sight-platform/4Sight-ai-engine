@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import APIRouter, HTTPException, status
+from starlette.responses import HTMLResponse
 import logging
 
 from base_requests import (
@@ -20,14 +21,233 @@ from base_requests import (
     ErrorResponse
 )
 from onboarding.fetch_profile_data import get_profile_manager
+from onboarding.oauth_manager import OAuthManager
+from config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize OAuth Manager
+oauth_manager = OAuthManager(
+    client_id=settings.GOOGLE_CLIENT_ID,
+    client_secret=settings.GOOGLE_CLIENT_SECRET,
+    redirect_uri=settings.GOOGLE_REDIRECT_URI,
+    encryption_key=settings.ENCRYPTION_KEY
+)
+
 # Create API router for incremental onboarding
 api_router = APIRouter(tags=["Platform Services"])
 
+
+# ==================== OAuth Endpoints ====================
+
+@api_router.get(
+    "/oauth/authorize",
+    summary="Step 1: Get Google OAuth URL",
+    description="Returns the Google authorization URL to redirect the user to"
+)
+async def get_oauth_url(user_id: str = None):
+    """
+    Generate Google OAuth authorization URL.
+    Frontend should redirect user to this URL.
+    
+    Args:
+        user_id: Optional user ID to include in state for callback
+    """
+    try:
+        # Pass user_id as state parameter so we can retrieve it in callback
+        auth_url = oauth_manager.get_authorization_url(state=user_id)
+        
+        return {
+            "status": "success",
+            "authorization_url": auth_url,
+            "message": "Redirect user to this URL to authorize"
+        }
+    except Exception as e:
+        logger.error(f"Error generating OAuth URL: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate OAuth URL: {str(e)}"
+        )
+
+
+@api_router.get(
+    "/oauth/callback",
+    summary="Step 2: OAuth Callback",
+    description="Receives authorization code from Google and exchanges for tokens"
+)
+async def oauth_callback(code: str, state: str = None):
+    """
+    Handle OAuth callback from Google.
+    
+    Query params:
+        code: Authorization code from Google
+        state: Contains user_id passed during authorization
+    
+    This endpoint:
+    1. Exchanges code for access_token + refresh_token
+    2. Stores encrypted refresh_token
+    3. Returns HTML page that sends data to parent window
+    """
+    try:
+        # Extract user_id from state parameter
+        user_id = state
+        
+        if not user_id:
+            logger.error("[OAuth] No user_id in state parameter")
+            return HTMLResponse(content="""
+            <html>
+            <body>
+                <script>
+                    window.opener.postMessage({type: 'OAUTH_ERROR', error: 'Missing user ID'}, '*');
+                    window.close();
+                </script>
+                <p>Error: Missing user ID. This window will close.</p>
+            </body>
+            </html>
+            """)
+        
+        logger.info(f"[OAuth] Received callback for user: {user_id}")
+        
+        if not code:
+            return HTMLResponse(content="""
+            <html>
+            <body>
+                <script>
+                    window.opener.postMessage({type: 'OAUTH_ERROR', error: 'Missing authorization code'}, '*');
+                    window.close();
+                </script>
+                <p>Error: Missing authorization code. This window will close.</p>
+            </body>
+            </html>
+            """)
+        
+        # Exchange code for tokens
+        token_data = await oauth_manager.exchange_code_for_tokens(code)
+        
+        # Store refresh token (encrypted)
+        oauth_manager.store_tokens(user_id, token_data)
+        
+        access_token = token_data.get("access_token", "")
+        expires_in = token_data.get("expires_in", 3600)
+        
+        # Return HTML that sends data to parent window via postMessage
+        return HTMLResponse(content=f"""
+        <html>
+        <body>
+            <script>
+                window.opener.postMessage({{
+                    type: 'OAUTH_SUCCESS',
+                    user_id: '{user_id}',
+                    access_token: '{access_token}',
+                    expires_in: {expires_in}
+                }}, '*');
+                setTimeout(() => window.close(), 500);
+            </script>
+            <div style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: #10b981;">✓ Authentication Successful!</h2>
+                <p>This window will close automatically...</p>
+            </div>
+        </body>
+        </html>
+        """)
+        
+    except Exception as e:
+        logger.error(f"OAuth callback error: {e}", exc_info=True)
+        error_message = str(e).replace("'", "\\'")
+        return HTMLResponse(content=f"""
+        <html>
+        <body>
+            <script>
+                window.opener.postMessage({{type: 'OAUTH_ERROR', error: '{error_message}'}}, '*');
+                setTimeout(() => window.close(), 2000);
+            </script>
+            <div style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2 style="color: #ef4444;">✗ Authentication Failed</h2>
+                <p>{error_message}</p>
+                <p>This window will close automatically...</p>
+            </div>
+        </body>
+        </html>
+        """)
+
+
+@api_router.get(
+    "/oauth/status/{user_id}",
+    summary="Check OAuth Status",
+    description="Check if user has valid stored credentials"
+)
+async def check_oauth_status(user_id: str):
+    """
+    Check if user has stored OAuth credentials.
+    
+    Returns:
+        - has_credentials: Boolean
+        - can_refresh: Boolean (if they have stored refresh token)
+    """
+    try:
+        has_creds = oauth_manager.has_valid_credentials(user_id)
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "has_credentials": has_creds,
+            "can_refresh_token": has_creds
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking OAuth status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check OAuth status: {str(e)}"
+        )
+
+
+@api_router.get(
+    "/oauth/refresh/{user_id}",
+    summary="Refresh Access Token",
+    description="Get a fresh access token using stored refresh token"
+)
+async def refresh_access_token(user_id: str):
+    """
+    Use stored refresh token to get a new access token.
+    
+    Returns:
+        - access_token: Fresh access token for API calls
+    """
+    try:
+        if not oauth_manager.has_valid_credentials(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No stored credentials for this user. Please authenticate first."
+            )
+        
+        access_token = await oauth_manager.refresh_access_token(user_id)
+        
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Failed to refresh token. Please re-authenticate."
+            )
+        
+        return {
+            "status": "success",
+            "user_id": user_id,
+            "access_token": access_token
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error refreshing access token: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to refresh access token: {str(e)}"
+        )
+
+
+# ==================== Onboarding Endpoints ====================
 
 @api_router.post(
     "/onboarding/page1/business-info",
@@ -81,17 +301,24 @@ async def save_business_info(request: Page1BusinessInfoRequest) -> StandardRespo
 
 
 @api_router.post(
-    "/onboarding/page2/gsc",
+    "/onboarding/page2/validate-connections",
     response_model=StandardResponse,
     status_code=status.HTTP_200_OK,
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-    summary="Page 2: Submit GSC Connection Status",
-    description="Save Google Search Console connection status"
+    summary="Page 2: Validate GSC and GA4 Access",
+    description="Validate Google Search Console and GA4 access using OAuth tokens"
 )
-async def save_gsc_connection(request: Page2GSCRequest) -> StandardResponse:
-    """Save GSC connection status (Page 2)."""
+async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardResponse:
+    """
+    Validate GSC and GA4 connection (Page 2).
+    
+    This endpoint:
+    1. Checks if user already has validated connections
+    2. If not, uses access_token to validate ownership/access
+    3. Stores validation results (NO heavy data fetching)
+    """
     try:
-        logger.info(f"Saving GSC connection for user: {request.user_id}")
+        logger.info(f"Validating GSC/GA4 for user: {request.user_id}")
         
         pm = get_profile_manager()
         
@@ -101,23 +328,93 @@ async def save_gsc_connection(request: Page2GSCRequest) -> StandardResponse:
                 detail=f"Profile not found: {request.user_id}"
             )
         
-        gsc_data = {'gsc_connected': request.gsc_connected}
-        pm.update_profile(request.user_id, gsc_data)
+        validation_results = {
+            "gsc_validated": False,
+            "ga4_validated": False,
+            "gsc_sites": [],
+            "ga4_properties": [],
+            "matched_gsc_site": None,
+            "errors": []
+        }
+        
+        # GSC Validation
+        if request.validate_gsc:
+            try:
+                from onboarding.ga_gsc_connection.gsc_connect import GSCConnector
+                
+                connector = GSCConnector(request.access_token)
+                
+                # List all owned sites
+                sites = await connector.list_sites()
+                validation_results["gsc_sites"] = sites
+                
+                # Validate ownership of target URL
+                is_owner, matched_site = await connector.validate_ownership(request.target_url)
+                
+                if is_owner:
+                    validation_results["gsc_validated"] = True
+                    validation_results["matched_gsc_site"] = matched_site
+                    logger.info(f"✓ GSC validated for {matched_site}")
+                else:
+                    validation_results["errors"].append(
+                        f"GSC: User does not own {request.target_url}"
+                    )
+                    logger.warning(f"✗ GSC validation failed for {request.target_url}")
+                    
+            except Exception as e:
+                validation_results["errors"].append(f"GSC Error: {str(e)}")
+                logger.error(f"GSC validation error: {e}", exc_info=True)
+        
+        # GA4 Validation
+        if request.validate_ga4:
+            try:
+                from onboarding.ga_gsc_connection.ga_connect import GA4Connector
+                
+                connector = GA4Connector(request.access_token)
+                
+                # List all accessible properties
+                properties = connector.list_properties()
+                validation_results["ga4_properties"] = properties
+                
+                if len(properties) > 0:
+                    validation_results["ga4_validated"] = True
+                    logger.info(f"✓ GA4 validated: {len(properties)} properties found")
+                else:
+                    validation_results["errors"].append("GA4: No properties found")
+                    logger.warning("✗ GA4 validation: No properties accessible")
+                    
+            except Exception as e:
+                validation_results["errors"].append(f"GA4 Error: {str(e)}")
+                logger.error(f"GA4 validation error: {e}", exc_info=True)
+        
+        # Save validation status to profile
+        connection_data = {
+            'gsc_connected': validation_results["gsc_validated"],
+            'ga4_connected': validation_results["ga4_validated"],
+            'gsc_matched_site': validation_results["matched_gsc_site"]
+        }
+        pm.update_profile(request.user_id, connection_data)
+        
+        # Determine overall status
+        overall_success = (
+            (not request.validate_gsc or validation_results["gsc_validated"]) and
+            (not request.validate_ga4 or validation_results["ga4_validated"])
+        )
         
         return StandardResponse(
-            status="success",
-            message="GSC connection status saved successfully",
+            status="success" if overall_success else "partial",
+            message="Validation complete" if overall_success else "Validation completed with warnings",
             user_id=request.user_id,
-            data=gsc_data
+            data=validation_results
         )
     
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.error(f"Error saving GSC connection: {str(e)}", exc_info=True)
+        logger.error(f"Error validating connections: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error saving GSC connection: {str(e)}"
+            detail=f"Error validating connections: {str(e)}"
         )
 
 

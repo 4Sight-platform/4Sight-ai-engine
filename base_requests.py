@@ -44,9 +44,12 @@ class Page1BusinessInfoRequest(BaseModel):
 
 
 class Page2GSCRequest(BaseModel):
-    """Page 2: GSC Connection"""
+    """Page 2: GSC/GA4 Connection and Validation"""
     user_id: str = Field(..., description="User ID from Page 1")
-    gsc_connected: bool = Field(default=False, description="Whether GSC is connected")
+    access_token: str = Field(..., description="OAuth access token for GSC/GA4")
+    target_url: str = Field(..., description="Website URL to validate GSC ownership")
+    validate_gsc: bool = Field(default=True, description="Whether to validate GSC")
+    validate_ga4: bool = Field(default=True, description="Whether to validate GA4")
 
 
 class Page3AudienceRequest(BaseModel):
@@ -94,6 +97,14 @@ class StandardResponse(BaseModel):
     message: str = Field(..., description="Human-readable message")
     user_id: Optional[str] = Field(None, description="User ID")
     data: Optional[Dict[str, Any]] = Field(None, description="Response data")
+
+
+class Page2ValidationResponse(BaseModel):
+    """Response model for Page 2 GSC/GA4 validation"""
+    status: str = Field(..., description="Status of the validation")
+    message: str = Field(..., description="Human-readable message")
+    user_id: str = Field(..., description="User ID")
+    data: Dict[str, Any] = Field(..., description="Validation results including owned sites/properties")
 
 
 class KeywordsResponse(BaseModel):
