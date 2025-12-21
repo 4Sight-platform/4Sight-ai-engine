@@ -1,22 +1,28 @@
 """
-OAuth Manager for Google Authentication
-Handles token exchange, encryption, and storage
+OAuth Manager for Google OAuth 2.0 Flow
+Handles authorization, token exchange, and encrypted storage of refresh tokens.
 """
 
-import logging
+import os
 import json
+import logging
+from datetime import datetime
+from typing import Optional, Dict, Any
 from pathlib import Path
-from typing import Optional, Dict
-from datetime import datetime, timedelta
 from urllib.parse import urlencode
 import httpx
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
 class OAuthManager:
     """
-    Manages OAuth flow for Google services (GSC + GA4)
+    Manages Google OAuth 2.0 flow for GSC and GA4 access.
     """
     
     # Google OAuth endpoints
@@ -31,10 +37,21 @@ class OAuthManager:
         "email"
     ]
     
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str, encryption_key: str):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.redirect_uri = redirect_uri
+    def __init__(
+        self,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        redirect_uri: Optional[str] = None,
+        encryption_key: Optional[str] = None
+    ):
+        """Initialize OAuth manager with credentials."""
+        # Load from environment if not provided
+        self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
+        self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
+        self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/oauth/callback")
+        
+        # Encryption setup
+        encryption_key = encryption_key or os.getenv("ENCRYPTION_KEY")
         
         # Initialize encryption
         try:

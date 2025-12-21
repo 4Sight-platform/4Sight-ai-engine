@@ -1,5 +1,10 @@
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -14,15 +19,18 @@ from base_requests import (
     Page3AudienceRequest,
     Page4PortfolioRequest,
     Page5GoalsRequest,
+    Page6KeywordsRequest,
+    Page6CompetitorsRequest,
     Page7ContentFilterRequest,
     Page8ReportingRequest,
     StandardResponse,
     KeywordsResponse,
-    ErrorResponse
+    ErrorResponse,
+    Page6KeywordsResponse,
 )
 from onboarding.fetch_profile_data import get_profile_manager
 from onboarding.oauth_manager import OAuthManager
-from config import settings
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,10 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Initialize OAuth Manager
 oauth_manager = OAuthManager(
-    client_id=settings.GOOGLE_CLIENT_ID,
-    client_secret=settings.GOOGLE_CLIENT_SECRET,
-    redirect_uri=settings.GOOGLE_REDIRECT_URI,
-    encryption_key=settings.ENCRYPTION_KEY
+    client_id=os.getenv("GOOGLE_CLIENT_ID"),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/oauth/callback"),
+    encryption_key=os.getenv("ENCRYPTION_KEY")
 )
 
 # Create API router for incremental onboarding
@@ -313,8 +321,8 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
     Validate GSC and GA4 connection (Page 2).
     
     This endpoint:
-    1. Checks if user already has validated connections
-    2. If not, uses access_token to validate ownership/access
+    1. Refreshes access token using stored refresh token (prevents expiry issues)
+    2. Uses fresh access_token to validate ownership/access
     3. Stores validation results (NO heavy data fetching)
     """
     try:
@@ -326,6 +334,23 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Profile not found: {request.user_id}"
+            )
+        
+        # Always refresh access token to ensure it's valid
+        # This uses the stored refresh_token + client credentials from .env
+        try:
+            if oauth_manager.has_valid_credentials(request.user_id):
+                fresh_access_token = await oauth_manager.refresh_access_token(request.user_id)
+                logger.info(f"[OAuth] Refreshed access token for user: {request.user_id}")
+            else:
+                # Fallback to provided token if no stored credentials
+                fresh_access_token = request.access_token
+                logger.warning(f"[OAuth] No stored credentials, using provided token for: {request.user_id}")
+        except Exception as refresh_error:
+            logger.error(f"[OAuth] Token refresh failed: {refresh_error}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token refresh failed. Please re-authenticate with Google."
             )
         
         validation_results = {
@@ -342,7 +367,7 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             try:
                 from onboarding.ga_gsc_connection.gsc_connect import GSCConnector
                 
-                connector = GSCConnector(request.access_token)
+                connector = GSCConnector(fresh_access_token)
                 
                 # List all owned sites
                 sites = await connector.list_sites()
@@ -370,7 +395,7 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             try:
                 from onboarding.ga_gsc_connection.ga_connect import GA4Connector
                 
-                connector = GA4Connector(request.access_token)
+                connector = GA4Connector(fresh_access_token)
                 
                 # List all accessible properties
                 properties = connector.list_properties()
@@ -824,4 +849,290 @@ async def save_reporting(request: Page8ReportingRequest) -> StandardResponse:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error saving reporting settings: {str(e)}"
+        )
+
+@api_router.post(
+    "/onboarding/page6/submit-keywords",
+    response_model=Page6KeywordsResponse,
+    status_code=status.HTTP_200_OK,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Page 6 Step 1: Submit Keywords and Get Suggested Competitors",
+    description="User submits selected + custom keywords. Backend runs competitor analysis and returns suggested competitors."
+)
+async def submit_keywords_get_competitors(request: Page6KeywordsRequest) -> Page6KeywordsResponse:
+    """
+    Page 6 Step 1: Submit keywords and trigger competitor discovery.
+    
+    Flow:
+    1. User submits selected keywords + custom keywords
+    2. Backend combines and saves keywords
+    3. Backend runs competitor analysis on these keywords
+    4. Backend returns suggested competitors from SERP data
+    5. User can then select/add competitors in Step 2
+    """
+    try:
+        logger.info(f"[Page 6 Step 1] Submitting keywords for user: {request.user_id}")
+        
+        pm = get_profile_manager()
+        
+        if not pm.profile_exists(request.user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile not found: {request.user_id}"
+            )
+        
+        # Combine and deduplicate keywords
+        final_keywords = list(set(request.selected_keywords + request.custom_keywords))
+        
+        # Validate
+        if len(final_keywords) < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least 1 keyword is required"
+            )
+        
+        if len(final_keywords) > 50:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 50 keywords allowed"
+            )
+        
+        # Save keywords to profile
+        pm.save_keywords_selected(request.user_id, final_keywords)
+        
+        logger.info(f"[Page 6 Step 1] Saved {len(final_keywords)} keywords. Running competitor analysis...")
+        
+        # Run competitor analysis to get suggested competitors
+        from onboarding.competitor_analysis.competitor_analysis import analyze_competitors
+        
+        # Get Google CSE credentials
+        google_cse_api_key = os.getenv("GOOGLE_CSE_API_KEY")
+        google_cse_cx = os.getenv("GOOGLE_CSE_CX")
+        
+        if not google_cse_api_key or not google_cse_cx:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Google Custom Search not configured"
+            )
+        
+        # Load profile for location
+        profile = pm.load_profile(request.user_id)
+        
+        # Run competitor analysis
+        competitor_result = await analyze_competitors(
+            keywords=final_keywords,
+            google_cse_api_key=google_cse_api_key,
+            google_cse_cx=google_cse_cx,
+            top_results_per_keyword=10,
+            final_top_competitors=10,
+            location=profile.get("location_scope", "India"),
+            language="en"
+        )
+        
+        # Save suggested competitors to profile (not final, just suggestions)
+        pm.update_profile(request.user_id, {
+            "suggested_competitors": competitor_result["top_competitors"]
+        })
+        
+        logger.info(f"[Page 6 Step 1] Found {len(competitor_result['top_competitors'])} suggested competitors")
+        
+        return Page6KeywordsResponse(
+            status="success",
+            message=f"Keywords saved and competitor analysis complete",
+            user_id=request.user_id,
+            data={
+                "final_keywords": final_keywords,
+                "total_keywords": len(final_keywords),
+                "suggested_competitors": competitor_result["top_competitors"],
+                "next_step": "Select competitors from suggestions or add manual competitors"
+            }
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[Page 6 Step 1] Error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing keywords: {str(e)}"
+        )
+
+@api_router.post(
+    "/onboarding/page6/submit-competitors",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Page 6 Step 2: Submit Final Competitors",
+    description="User submits selected competitors from suggested list + manual competitors"
+)
+async def submit_final_competitors(request: Page6CompetitorsRequest) -> StandardResponse:
+    """
+    Page 6 Step 2: Submit final competitor selection.
+    
+    Flow:
+    1. User has received suggested competitors from Step 1
+    2. User selects competitors from suggestions
+    3. User optionally adds manual competitors
+    4. Backend saves final competitor list
+    """
+    try:
+        logger.info(f"[Page 6 Step 2] Submitting competitors for user: {request.user_id}")
+        
+        pm = get_profile_manager()
+        
+        if not pm.profile_exists(request.user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile not found: {request.user_id}"
+            )
+        
+        # Load profile to get suggested competitors
+        profile = pm.load_profile(request.user_id)
+        suggested_competitors = profile.get("suggested_competitors", [])
+        
+        # Prepare final competitor list
+        final_competitors = []
+        
+        # Add selected competitors from suggestions
+        for domain in request.selected_competitors:
+            # Find in suggested list
+            matched = next((c for c in suggested_competitors if c["domain"] == domain), None)
+            if matched:
+                final_competitors.append({
+                    "domain": matched["domain"],
+                    "source": "DISCOVERED",
+                    "importance": matched.get("importance"),
+                    "priority": matched.get("priority"),
+                    "keywords_matched": matched.get("keywords_matched", [])
+                })
+        
+        # Add manual competitors
+        for comp in request.manual_competitors:
+            final_competitors.append({
+                "domain": comp.website,
+                "name": comp.name,
+                "source": "MANUAL",
+                "importance": None,
+                "priority": None,
+                "keywords_matched": []
+            })
+        
+        # Save final competitors
+        pm.update_profile(request.user_id, {
+            "final_competitors": final_competitors,
+            "competitor_selection_complete": True
+        })
+        
+        logger.info(f"[Page 6 Step 2] Saved {len(final_competitors)} final competitors (Selected: {len(request.selected_competitors)}, Manual: {len(request.manual_competitors)})")
+        
+        return StandardResponse(
+            status="success",
+            message=f"Competitors saved successfully",
+            user_id=request.user_id,
+            data={
+                "total_competitors": len(final_competitors),
+                "selected_from_suggested": len(request.selected_competitors),
+                "manual_added": len(request.manual_competitors),
+                "final_competitors": final_competitors
+            }
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[Page 6 Step 2] Error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error saving competitors: {str(e)}"
+        )
+        
+        
+        
+        
+@api_router.post(
+    "/onboarding/competitor-analysis/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Competitor Analysis: Analyze Competitors from Page 6 Keywords",
+    description="Fetches Page 6 finalized keywords and discovers competitors using Google SERP data"
+)
+async def analyze_competitors_endpoint(user_id: str) -> StandardResponse:
+    """
+    Analyze competitors based on Page 6 selected keywords.
+    
+    This endpoint:
+    1. Fetches the user's selected keywords from Page 6
+    2. Runs competitor analysis using Google Custom Search
+    3. Returns ranked competitors with priority buckets
+    """
+    try:
+        logger.info(f"[Competitor Analysis] Starting analysis for user: {user_id}")
+        
+        pm = get_profile_manager()
+        
+        if not pm.profile_exists(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Profile not found: {user_id}"
+            )
+        
+        # Load user profile
+        profile = pm.load_profile(user_id)
+        
+        # Get selected keywords from Page 6
+        selected_keywords = profile.get("selected_keywords", [])
+        
+        if not selected_keywords:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No keywords found. Please complete Page 6 first."
+            )
+        
+        # Import competitor analysis function
+        from onboarding.competitor_analysis.competitor_analysis import analyze_competitors
+        
+        # Get Google CSE credentials from config
+        google_cse_api_key = os.getenv("GOOGLE_CSE_API_KEY")
+        google_cse_cx = os.getenv("GOOGLE_CSE_CX")
+        
+        if not google_cse_api_key or not google_cse_cx:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Google Custom Search not configured"
+            )
+        
+        # Run competitor analysis
+        result = await analyze_competitors(
+            keywords=selected_keywords,
+            google_cse_api_key=google_cse_api_key,
+            google_cse_cx=google_cse_cx,
+            top_results_per_keyword=10,
+            final_top_competitors=10,
+            location=profile.get("location_scope", "India"),
+            language="en"
+        )
+        
+        # Save competitor analysis results to profile
+        pm.update_profile(user_id, {
+            "competitor_analysis": result["top_competitors"],
+            "competitor_analysis_date": "2025-12-20"
+        })
+        
+        logger.info(f"[Competitor Analysis] Found {len(result['top_competitors'])} competitors")
+        
+        return StandardResponse(
+            status="success",
+            message=f"Competitor analysis complete. Found {result['keywords_analyzed']} keywords, {len(result['top_competitors'])} competitors.",
+            user_id=user_id,
+            data=result
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[Competitor Analysis] Error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Competitor analysis failed: {str(e)}"
         )

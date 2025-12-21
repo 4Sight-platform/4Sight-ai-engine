@@ -88,6 +88,25 @@ class Page8ReportingRequest(BaseModel):
     email_addresses: List[str] = Field(default_factory=list, max_length=5, description="Email addresses")
     report_frequency: str = Field(..., description="Report frequency")
 
+class Page6KeywordsRequest(BaseModel):
+    """Page 6 Step 1: Submit Keywords"""
+    user_id: str = Field(..., description="User ID")
+    selected_keywords: List[str] = Field(..., min_length=1, max_length=50, description="Selected keywords from suggested list")
+    custom_keywords: List[str] = Field(default_factory=list, max_length=20, description="Custom keywords added by user")
+
+
+class ManualCompetitor(BaseModel):
+    """Manual competitor input"""
+    name: str = Field(..., min_length=1, max_length=100, description="Competitor name")
+    website: str = Field(..., description="Competitor website URL")
+
+
+class Page6CompetitorsRequest(BaseModel):
+    """Page 6 Step 2: Submit Competitors"""
+    user_id: str = Field(..., description="User ID")
+    selected_competitors: List[str] = Field(default_factory=list, max_length=10, description="Selected competitor domains from suggested list")
+    manual_competitors: List[ManualCompetitor] = Field(default_factory=list, max_length=5, description="Manual competitors added by user")
+
 
 # ==================== Response Models ====================
 
@@ -121,3 +140,25 @@ class ErrorResponse(BaseModel):
     message: str = Field(..., description="Error message")
     detail: Optional[str] = Field(None, description="Detailed error information")
 
+
+class CompetitorSuggestion(BaseModel):
+    """Model for a suggested competitor from analysis"""
+    domain: str = Field(..., description="Competitor domain")
+    importance: int = Field(..., description="Relevance score based on keyword intersection")
+    priority: str = Field(..., description="Priority bucket: HIGH/MEDIUM/LOW")
+    keywords_matched: List[str] = Field(..., description="Keywords where this competitor appeared")
+
+
+class Page6KeywordsResponseData(BaseModel):
+    final_keywords: List[str]
+    total_keywords: int
+    suggested_competitors: List[CompetitorSuggestion]
+    next_step: str
+
+
+class Page6KeywordsResponse(BaseModel):
+    """Response model for submitting keywords and receiving competitor suggestions"""
+    status: str = Field(..., description="Status")
+    message: str = Field(..., description="Message")
+    user_id: str = Field(..., description="User ID")
+    data: Page6KeywordsResponseData = Field(..., description="Response data containing suggested competitors")
