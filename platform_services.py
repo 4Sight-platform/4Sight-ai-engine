@@ -321,8 +321,8 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
     Validate GSC and GA4 connection (Page 2).
     
     This endpoint:
-    1. Checks if user already has validated connections
-    2. If not, uses access_token to validate ownership/access
+    1. Refreshes access token using stored refresh token (prevents expiry issues)
+    2. Uses fresh access_token to validate ownership/access
     3. Stores validation results (NO heavy data fetching)
     """
     try:
@@ -334,6 +334,23 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Profile not found: {request.user_id}"
+            )
+        
+        # Always refresh access token to ensure it's valid
+        # This uses the stored refresh_token + client credentials from .env
+        try:
+            if oauth_manager.has_valid_credentials(request.user_id):
+                fresh_access_token = await oauth_manager.refresh_access_token(request.user_id)
+                logger.info(f"[OAuth] Refreshed access token for user: {request.user_id}")
+            else:
+                # Fallback to provided token if no stored credentials
+                fresh_access_token = request.access_token
+                logger.warning(f"[OAuth] No stored credentials, using provided token for: {request.user_id}")
+        except Exception as refresh_error:
+            logger.error(f"[OAuth] Token refresh failed: {refresh_error}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token refresh failed. Please re-authenticate with Google."
             )
         
         validation_results = {
@@ -350,7 +367,7 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             try:
                 from onboarding.ga_gsc_connection.gsc_connect import GSCConnector
                 
-                connector = GSCConnector(request.access_token)
+                connector = GSCConnector(fresh_access_token)
                 
                 # List all owned sites
                 sites = await connector.list_sites()
@@ -378,7 +395,7 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
             try:
                 from onboarding.ga_gsc_connection.ga_connect import GA4Connector
                 
-                connector = GA4Connector(request.access_token)
+                connector = GA4Connector(fresh_access_token)
                 
                 # List all accessible properties
                 properties = connector.list_properties()
