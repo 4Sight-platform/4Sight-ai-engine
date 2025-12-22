@@ -57,6 +57,29 @@ class GA4Connector:
             logger.error(f"[GA4] Failed to list properties: {e}")
             raise
 
+    def list_data_streams(self, property_resource: str) -> List[Dict[str, str]]:
+        """
+        List data streams for a property to check URLs.
+        Args:
+            property_resource: Resource name like 'properties/12345'
+        """
+        try:
+            service = build('analyticsadmin', 'v1beta', credentials=self.creds)
+            response = service.properties().dataStreams().list(parent=property_resource).execute()
+            
+            streams = []
+            for stream in response.get('dataStreams', []):
+                if 'webStreamData' in stream:
+                    streams.append({
+                        'stream_id': stream.get('name'),
+                        'display_name': stream.get('displayName'),
+                        'default_uri': stream['webStreamData'].get('defaultUri')
+                    })
+            return streams
+        except Exception as e:
+            logger.error(f"[GA4] Failed to list data streams for {property_resource}: {e}")
+            return []
+
     def validate_access(self, target_property_id: str) -> bool:
         """
         Check if the user has access to a specific Property ID.
