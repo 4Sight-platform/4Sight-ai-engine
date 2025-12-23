@@ -162,3 +162,16 @@ class Page6KeywordsResponse(BaseModel):
     message: str = Field(..., description="Message")
     user_id: str = Field(..., description="User ID")
     data: Page6KeywordsResponseData = Field(..., description="Response data containing suggested competitors")
+
+
+class ScrapeBusinessRequest(BaseModel):
+    """Request to scrape business description from URL"""
+    url: str = Field(..., description="Website URL to scrape")
+
+
+class ScrapeBusinessResponse(BaseModel):
+    """Response for business scraping"""
+    status: str = Field(..., description="Status (success/error)")
+    description: Optional[str] = Field(None, description="Scraped business description")
+    url: str = Field(..., description="Normalized URL")
+    error: Optional[str] = Field(None, description="Error message if failed")
