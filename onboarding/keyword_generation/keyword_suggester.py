@@ -97,7 +97,7 @@ class KeywordSuggester:
                 full_prompt,
                 generation_config={
                     'temperature': TEMPERATURE_SETTINGS["generation"],
-                    'max_output_tokens': 2000,
+                    'max_output_tokens': 4000,  # Increased from 2000 to prevent cutoff
                 }
             )
             
