@@ -27,7 +27,10 @@ from base_requests import (
     KeywordsResponse,
     ErrorResponse,
     Page6KeywordsResponse,
+    ScrapeBusinessRequest,
+    ScrapeBusinessResponse,
 )
+from onboarding.scraper_services.scraper import scrape_business_description
 from onboarding.fetch_profile_data import get_profile_manager
 from onboarding.oauth_manager import OAuthManager
 
@@ -258,6 +261,46 @@ async def refresh_access_token(user_id: str):
 # ==================== Onboarding Endpoints ====================
 
 @api_router.post(
+    "/onboarding/scrape-url",
+    response_model=ScrapeBusinessResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Scrape Business Description",
+    description="Helper endpoint to scrape business description from a URL using Tavily."
+)
+async def scrape_url(request: ScrapeBusinessRequest) -> ScrapeBusinessResponse:
+    """
+    Scrape business description from URL.
+    This is used in Page 1 to auto-fill the description.
+    """
+    try:
+        url = request.url.strip()
+        logger.info(f"Scraping URL: {url}")
+        
+        description = scrape_business_description(url)
+        
+        if description:
+            return ScrapeBusinessResponse(
+                status="success",
+                description=description,
+                url=url
+            )
+        else:
+            return ScrapeBusinessResponse(
+                status="error",
+                error="Could not extract description from website",
+                url=url
+            )
+            
+    except Exception as e:
+        logger.error(f"Scraping error: {str(e)}")
+        return ScrapeBusinessResponse(
+            status="error",
+            error=str(e),
+            url=url
+        )
+
+
+@api_router.post(
     "/onboarding/page1/business-info",
     response_model=StandardResponse,
     status_code=status.HTTP_201_CREATED,
@@ -401,12 +444,32 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
                 properties = connector.list_properties()
                 validation_results["ga4_properties"] = properties
                 
-                if len(properties) > 0:
-                    validation_results["ga4_validated"] = True
-                    logger.info(f"✓ GA4 validated: {len(properties)} properties found")
-                else:
+                if not properties:
                     validation_results["errors"].append("GA4: No properties found")
                     logger.warning("✗ GA4 validation: No properties accessible")
+                else:
+                    # Strict Validation: Check if any property has a data stream matching the target URL
+                    matched_stream = None
+                    target_clean = request.target_url.replace('https://', '').replace('http://', '').replace('www.', '').strip('/')
+                    
+                    for prop in properties:
+                        streams = connector.list_data_streams(prop['resource_name'])
+                        for stream in streams:
+                            stream_uri = stream.get('default_uri', '')
+                            if stream_uri:
+                                stream_clean = stream_uri.replace('https://', '').replace('http://', '').replace('www.', '').strip('/')
+                                if target_clean == stream_clean:
+                                    matched_stream = stream
+                                    break
+                        if matched_stream:
+                            break
+                    
+                    if matched_stream:
+                        validation_results["ga4_validated"] = True
+                        logger.info(f"✓ GA4 validated: Found matching stream {matched_stream['default_uri']}")
+                    else:
+                        validation_results["errors"].append(f"GA4: No property found for {request.target_url}")
+                        logger.warning(f"✗ GA4 validation: No matching stream for {request.target_url}")
                     
             except Exception as e:
                 validation_results["errors"].append(f"GA4 Error: {str(e)}")

@@ -48,7 +48,7 @@ class OAuthManager:
         # Load from environment if not provided
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
-        self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/v1/oauth/callback")
+        self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8001/api/v1/oauth/callback")
         
         # Encryption setup
         encryption_key = encryption_key or os.getenv("ENCRYPTION_KEY")
@@ -81,7 +81,7 @@ class OAuthManager:
             "response_type": "code",
             "scope": " ".join(self.SCOPES),
             "access_type": "offline",  # Request refresh token
-            "prompt": "consent"  # Force consent to get refresh token
+            "prompt": "consent select_account"  # Force consent and account selection
         }
         
         if state:
