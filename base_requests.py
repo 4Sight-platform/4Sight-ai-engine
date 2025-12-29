@@ -23,10 +23,30 @@ class KeywordData(BaseModel):
 
 class Page1BusinessInfoRequest(BaseModel):
     """Page 1: Business Information"""
+    full_name: str = Field(..., min_length=2, max_length=255, description="User's full name")
+    email: str = Field(..., description="User's email address")
+    username: str = Field(..., min_length=3, max_length=100, description="Username")
     business_name: str = Field(..., min_length=2, max_length=100, description="Business name")
     website_url: HttpUrl = Field(..., description="Website URL")
     business_description: str = Field(..., max_length=500, description="Business description")
-    user_id: Optional[str] = Field(None, description="User ID if updating existing profile")
+    user_id: Optional[str] = Field(None, description="User ID (generated from email if None)")
+    
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        import re
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, value):
+            raise ValueError("Invalid email format")
+        return value.lower().strip()
+    
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        import re
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            raise ValueError("Username can only contain letters, numbers, underscores, and hyphens")
+        return value.strip()
     
     @field_validator("business_name")
     @classmethod
@@ -61,12 +81,24 @@ class Page3AudienceRequest(BaseModel):
     search_intent: List[str] = Field(..., min_length=1, max_length=2, description="Primary search intent types (1-2 selections)")
 
 
+class ProductItem(BaseModel):
+    """Product with name and URL"""
+    product_name: str = Field(..., min_length=1, max_length=255, description="Product name")
+    product_url: Optional[str] = Field(None, max_length=500, description="Product page URL")
+
+
+class ServiceItem(BaseModel):
+    """Service with name and URL"""
+    service_name: str = Field(..., min_length=1, max_length=255, description="Service name")
+    service_url: Optional[str] = Field(None, max_length=500, description="Service page URL")
+
+
 class Page4PortfolioRequest(BaseModel):
     """Page 4: Business Portfolio"""
     user_id: str = Field(..., description="User ID")
-    products: List[str] = Field(default_factory=list, max_length=10, description="Products")
-    services: List[str] = Field(default_factory=list, max_length=10, description="Services")
-    differentiators: List[str] = Field(default_factory=list, max_length=5, description="Differentiators")
+    products: List[ProductItem] = Field(default_factory=list, max_length=10, description="Products with names and URLs")
+    services: List[ServiceItem] = Field(default_factory=list, max_length=10, description="Services with names and URLs")
+    differentiators: List[str] = Field(default_factory=list, max_length=5, description="Brand differentiators")
 
 
 class Page5GoalsRequest(BaseModel):
@@ -175,3 +207,15 @@ class ScrapeBusinessResponse(BaseModel):
     description: Optional[str] = Field(None, description="Scraped business description")
     url: str = Field(..., description="Normalized URL")
     error: Optional[str] = Field(None, description="Error message if failed")
+
+# ==================== Strategy / Keyword Planner Models ====================
+
+class KeywordUniverseInitRequest(BaseModel):
+    """Initialize Keyword Universe request"""
+    user_id: str = Field(..., description="User ID")
+
+class KeywordSelectionRequest(BaseModel):
+    """Finalize Keyword Selection request"""
+    # Must select 10-15 keywords
+    selected_keyword_ids: List[int] = Field(..., min_length=10, max_length=15, description="List of 10-15 selected keyword IDs")
+    lock_until: Optional[str] = Field(None, description="Optional lock expiry date")

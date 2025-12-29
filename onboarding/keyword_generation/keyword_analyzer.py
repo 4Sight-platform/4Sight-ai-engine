@@ -244,8 +244,13 @@ class KeywordAnalyzer:
         
         # From products/services
         for item in profile.get('products', []) + profile.get('services', []):
-            words = re.findall(r'\b\w+\b', item.lower())
-            terms.update(w for w in words if w not in self.stopwords)
+            text = item
+            if isinstance(item, dict):
+                text = item.get('name', '') or item.get('product_name', '') or item.get('service_name', '')
+            
+            if isinstance(text, str):
+                words = re.findall(r'\b\w+\b', text.lower())
+                terms.update(w for w in words if w not in self.stopwords)
         
         return terms
     

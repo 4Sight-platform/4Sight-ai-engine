@@ -29,9 +29,12 @@ from base_requests import (
     Page6KeywordsResponse,
     ScrapeBusinessRequest,
     ScrapeBusinessResponse,
+    KeywordUniverseInitRequest,
+    KeywordSelectionRequest
 )
 from onboarding.scraper_services.scraper import scrape_business_description
 from onboarding.fetch_profile_data import get_profile_manager
+from onboarding.keyword_planner.planner_service import KeywordPlannerService
 from onboarding.oauth_manager import OAuthManager
 
 
@@ -311,34 +314,46 @@ async def scrape_url(request: ScrapeBusinessRequest) -> ScrapeBusinessResponse:
 async def save_business_info(request: Page1BusinessInfoRequest) -> StandardResponse:
     """
     Save business information (Page 1).
-    Creates a new user_id if not provided.
+    Generates user_id from email address if not provided.
     """
     try:
-        logger.info("Saving business information")
+        from utils.user_id import generate_user_id_from_email
+        
+        logger.info(f"Saving business information for email: {request.email}")
         
         pm = get_profile_manager()
         
-        # Create or update profile
-        if request.user_id and pm.profile_exists(request.user_id):
+        # Generate user_id from email (deterministic)
+        if request.user_id:
             user_id = request.user_id
         else:
-            user_id = pm.create_profile()
+            user_id = generate_user_id_from_email(request.email)
         
-        # Prepare data (Pydantic already validated the inputs)
-        business_data = {
+        # Prepare complete data (Pydantic already validated the inputs)
+        profile_data = {
+            # User identity
+            'full_name': request.full_name.strip(),
+            'email': request.email.lower().strip(),
+            'username': request.username.strip(),
+            # Business info
             'business_name': request.business_name.strip(),
             'website_url': str(request.website_url),  # Convert HttpUrl to string
             'business_description': request.business_description.strip()
         }
         
-        pm.update_profile(user_id, business_data)
-        logger.info(f"Saved business information for user: {user_id}")
+        # Create or update profile
+        if pm.profile_exists(user_id):
+            pm.update_profile(user_id, profile_data)
+            logger.info(f"Updated profile for user: {user_id}")
+        else:
+            pm.create_profile_with_id(user_id, profile_data)
+            logger.info(f"Created new profile for user: {user_id}")
         
         return StandardResponse(
             status="success",
             message="Business information saved successfully",
             user_id=user_id,
-            data=business_data
+            data=profile_data
         )
     
     except HTTPException as he:
@@ -615,8 +630,8 @@ async def save_portfolio(request: Page4PortfolioRequest) -> StandardResponse:
             )
         
         portfolio_data = {
-            'products': request.products,
-            'services': request.services,
+            'products': [p.dict() for p in request.products],
+            'services': [s.dict() for s in request.services],
             'differentiators': request.differentiators
         }
         
@@ -717,15 +732,24 @@ async def generate_keywords(user_id: str) -> KeywordsResponse:
             )
         
         # Load profile
-        profile = pm.load_profile(user_id)
+        profile = pm.get_profile(user_id)
         
         # Check if required data is present
         required_fields = ['business_name', 'business_description', 'customer_description']
-        missing_fields = [field for field in required_fields if field not in profile]
+        missing_fields = [field for field in required_fields if field not in profile or not profile[field]]
         if missing_fields:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Missing required fields for keyword generation: {', '.join(missing_fields)}"
+            )
+        
+        # Check Portfolio (At least one product OR service required)
+        products = profile.get('products', [])
+        services = profile.get('services', [])
+        if not products and not services:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing Portfolio data: At least one Product or Service is required for keyword generation."
             )
         
         try:
@@ -735,13 +759,16 @@ async def generate_keywords(user_id: str) -> KeywordsResponse:
             # Generate keywords (30 suggestions)
             keywords = generate_keywords_for_user(profile, count=30)
             
-            # Rank keywords and select top 15
-            ranked_keywords = rank_keywords(keywords, profile)[:15]
+            # Rank ALL keywords
+            all_ranked_keywords = rank_keywords(keywords, profile)
             
-            # Save generated keywords
-            pm.save_keywords_generated(user_id, keywords)
+            # Save generated keywords (using full ranked list with scores)
+            pm.save_keywords_generated(user_id, all_ranked_keywords)
             
-            # Extract keyword strings for selected keywords
+            # Select top 15 for response
+            ranked_keywords = all_ranked_keywords[:15]
+            
+            # Extract keyword strings for selected keywords (default selection)
             selected_keyword_strings = [kw['keyword'] for kw in ranked_keywords]
             
             # Save selected keywords
@@ -979,7 +1006,7 @@ async def submit_keywords_get_competitors(request: Page6KeywordsRequest) -> Page
             )
         
         # Load profile for location
-        profile = pm.load_profile(request.user_id)
+        profile = pm.get_profile(request.user_id)
         
         # Run competitor analysis
         competitor_result = await analyze_competitors(
@@ -1050,7 +1077,7 @@ async def submit_final_competitors(request: Page6CompetitorsRequest) -> Standard
             )
         
         # Load profile to get suggested competitors
-        profile = pm.load_profile(request.user_id)
+        profile = pm.get_profile(request.user_id)
         suggested_competitors = profile.get("suggested_competitors", [])
         
         # Prepare final competitor list
@@ -1141,7 +1168,7 @@ async def analyze_competitors_endpoint(user_id: str) -> StandardResponse:
             )
         
         # Load user profile
-        profile = pm.load_profile(user_id)
+        profile = pm.get_profile(user_id)
         
         # Get selected keywords from Page 6
         selected_keywords = profile.get("selected_keywords", [])
@@ -1199,3 +1226,61 @@ async def analyze_competitors_endpoint(user_id: str) -> StandardResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Competitor analysis failed: {str(e)}"
         )
+
+# ==================== Strategy / Keyword Planner API ====================
+
+@api_router.post("/strategy/keywords/initialize", tags=["Strategy"], response_model=StandardResponse)
+async def initialize_keyword_universe(request: KeywordUniverseInitRequest):
+    """Initialize Keyword Universe (Phase 1-4)"""
+    service = KeywordPlannerService()
+    try:
+        result = await service.initialize_universe(request.user_id)
+        return StandardResponse(
+            status="success",  
+            message="Keyword Universe initialized successfully", 
+            user_id=request.user_id, 
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"Error initializing universe: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        service.cleanup()
+
+@api_router.get("/strategy/keywords/{user_id}", tags=["Strategy"], response_model=StandardResponse)
+async def get_keyword_universe(user_id: str):
+    """Get current Keyword Universe state"""
+    service = KeywordPlannerService()
+    try:
+        result = service.get_universe(user_id)
+        return StandardResponse(
+            status="success", 
+            message="Keyword Universe fetched", 
+            user_id=user_id, 
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"Error fetching universe: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        service.cleanup()
+
+@api_router.post("/strategy/keywords/{user_id}/finalize", tags=["Strategy"], response_model=StandardResponse)
+async def finalize_keyword_selection(user_id: str, request: KeywordSelectionRequest):
+    """Finalize selection and Lock Universe (Phase 5)"""
+    service = KeywordPlannerService()
+    try:
+        result = service.finalize_selection(user_id, request.selected_keyword_ids)
+        return StandardResponse(
+            status="success", 
+            message="Keyword selection finalized and locked", 
+            user_id=user_id, 
+            data=result
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error finalizing selection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        service.cleanup()

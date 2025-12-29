@@ -46,3 +46,10 @@ Pillow==10.1.0
 # Testing (from Tester)
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.25
+
+#Google Ads
+google-ads

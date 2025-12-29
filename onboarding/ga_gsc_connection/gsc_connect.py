@@ -104,3 +104,38 @@ class GSCConnector:
         except Exception as e:
             logger.error(f"[GSC] Validation failed: {e}")
             raise
+
+    async def fetch_search_analytics(
+        self, 
+        site_url: str, 
+        start_date: str, 
+        end_date: str, 
+        dimensions: List[str] = ["query"],
+        row_limit: int = 1000
+    ) -> List[Dict]:
+        """Fetch search analytics data (ranking keywords)."""
+        import urllib.parse
+        encoded_site_url = urllib.parse.quote(site_url, safe='')
+        
+        url = f"{self.API_BASE}/sites/{encoded_site_url}/searchAnalytics/query"
+        
+        payload = {
+            "startDate": start_date,
+            "endDate": end_date,
+            "dimensions": dimensions,
+            "rowLimit": row_limit
+        }
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("rows", [])
+        except Exception as e:
+            logger.error(f"[GSC] Error fetching analytics for {site_url}: {e}")
+            return []

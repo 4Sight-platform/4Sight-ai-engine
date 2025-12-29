@@ -34,12 +34,26 @@ def build_keyword_generation_prompt(profile: Dict[str, Any]) -> str:
     intent_text = ', '.join(search_intent) if search_intent else 'informational and action-focused'
     
     # Get products/services
-    products = profile.get('products', [])
-    services = profile.get('services', [])
+    raw_products = profile.get('products', [])
+    products = []
+    for p in raw_products:
+        if isinstance(p, dict):
+            products.append(p.get('name', '') or p.get('product_name', ''))
+        elif isinstance(p, str):
+            products.append(p)
+            
+    raw_services = profile.get('services', [])
+    services = []
+    for s in raw_services:
+        if isinstance(s, dict):
+            services.append(s.get('name', '') or s.get('service_name', ''))
+        elif isinstance(s, str):
+            services.append(s)
+
     differentiators = profile.get('differentiators', [])
     
-    products_text = '\n  - ' + '\n  - '.join(products) if products else 'Not specified'
-    services_text = '\n  - ' + '\n  - '.join(services) if services else 'Not specified'
+    products_text = '\n  - ' + '\n  - '.join([p for p in products if p]) if products else 'Not specified'
+    services_text = '\n  - ' + '\n  - '.join([s for s in services if s]) if services else 'Not specified'
     differentiators_text = '\n  - ' + '\n  - '.join(differentiators) if differentiators else 'Not specified'
     
     # Get SEO goals
