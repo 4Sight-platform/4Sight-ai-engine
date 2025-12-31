@@ -388,7 +388,20 @@ class ProfileManager:
                     "customer_description": audience.customer_description,
                     "search_intent": audience.search_intent
                 })
-                
+            
+            # Fetch Selected Keywords from keyword_universe_items
+            selected_kws = db.query(KeywordUniverseItem).filter(
+                KeywordUniverseItem.user_id == user_id,
+                KeywordUniverseItem.is_selected == True
+            ).all()
+            data['selected_keywords'] = [kw.keyword for kw in selected_kws]
+            
+            # Fetch Final Competitors from onboarding_competitors
+            final_comps = db.query(OnboardingCompetitor).filter(
+                OnboardingCompetitor.user_id == user_id,
+                OnboardingCompetitor.is_selected == True
+            ).all()
+            data['final_competitors'] = [{'domain': c.competitor_url, 'name': c.competitor_name} for c in final_comps]
             
             return data
             

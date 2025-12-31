@@ -128,19 +128,43 @@ class CrawlerService:
         }
     
     def _extract_headings(self, soup: BeautifulSoup) -> Dict:
-        """Extract heading hierarchy."""
+        """Extract heading hierarchy with order validation."""
         h1_tags = soup.find_all('h1')
+        h2_tags = soup.find_all('h2')
+        h3_tags = soup.find_all('h3')
+        
         h1_texts = [h.get_text(strip=True) for h in h1_tags]
+        h2_texts = [h.get_text(strip=True) for h in h2_tags]
+        h3_texts = [h.get_text(strip=True) for h in h3_tags]
+        
+        # Check for empty headings
+        empty_headings = sum(1 for h in h1_texts + h2_texts + h3_texts if not h)
+        
+        # Check for duplicate headings
+        all_headings = h1_texts + h2_texts + h3_texts
+        duplicate_headings = len(all_headings) - len(set(all_headings))
+        
+        # Check heading order (H1 should come before H2, H2 before H3)
+        heading_order_valid = True
+        if h1_tags and h2_tags:
+            first_h1_pos = str(soup).find(str(h1_tags[0]))
+            first_h2_pos = str(soup).find(str(h2_tags[0]))
+            if first_h2_pos < first_h1_pos:
+                heading_order_valid = False
         
         return {
             "h1_count": len(h1_tags),
             "h1_text": h1_texts[0] if h1_texts else "",
             "h1_all": h1_texts,
-            "h2_count": len(soup.find_all('h2')),
-            "h3_count": len(soup.find_all('h3')),
+            "h2_count": len(h2_tags),
+            "h2_texts": h2_texts[:10],  # Limit for storage
+            "h3_count": len(h3_tags),
             "h4_count": len(soup.find_all('h4')),
             "h5_count": len(soup.find_all('h5')),
-            "h6_count": len(soup.find_all('h6'))
+            "h6_count": len(soup.find_all('h6')),
+            "empty_headings": empty_headings,
+            "duplicate_headings": duplicate_headings,
+            "heading_order_valid": heading_order_valid
         }
     
     def _extract_canonical(self, soup: BeautifulSoup, current_url: str) -> Dict:
@@ -219,23 +243,40 @@ class CrawlerService:
         }
     
     def _extract_images(self, soup: BeautifulSoup) -> Dict:
-        """Extract image signals."""
+        """Extract image signals with lazy loading and alt quality."""
         images = soup.find_all('img')
         
         with_alt = 0
         without_alt = 0
+        with_lazy_loading = 0
+        generic_alt_count = 0
+        
+        # Generic alt text patterns
+        generic_patterns = ['image', 'photo', 'picture', 'img', 'banner', 'logo', 'icon']
         
         for img in images:
             alt = img.get('alt', '').strip()
+            
             if alt:
                 with_alt += 1
+                # Check for generic alt text
+                if alt.lower() in generic_patterns or len(alt) < 5:
+                    generic_alt_count += 1
             else:
                 without_alt += 1
+            
+            # Check for lazy loading
+            if img.get('loading') == 'lazy':
+                with_lazy_loading += 1
         
         return {
             "image_count": len(images),
             "images_with_alt": with_alt,
-            "images_without_alt": without_alt
+            "images_without_alt": without_alt,
+            "images_with_lazy_loading": with_lazy_loading,
+            "images_with_generic_alt": generic_alt_count,
+            "lazy_loading_ratio": with_lazy_loading / len(images) if images else 0,
+            "alt_quality_ratio": (with_alt - generic_alt_count) / len(images) if images else 0
         }
     
     def _extract_url_properties(self, url: str) -> Dict:
@@ -360,3 +401,67 @@ class CrawlerService:
             logger.debug(f"[Crawler] llm.txt not found for {domain}: {e}")
         
         return result
+    
+    def _extract_meta_robots(self, soup: BeautifulSoup) -> Dict:
+        """Extract meta robots directives."""
+        robots_meta = soup.find('meta', attrs={'name': 'robots'})
+        content = robots_meta.get('content', '').lower() if robots_meta else ""
+        
+        return {
+            "meta_robots": content,
+            "is_noindex": 'noindex' in content,
+            "is_nofollow": 'nofollow' in content,
+            "is_indexable": 'noindex' not in content
+        }
+    
+    def _extract_schema(self, soup: BeautifulSoup) -> Dict:
+        """Extract schema.org structured data."""
+        import json
+        schema_scripts = soup.find_all('script', type='application/ld+json')
+        
+        schemas_found = []
+        has_organization = False
+        has_article = False
+        has_product = False
+        has_faq = False
+        has_breadcrumb = False
+        
+        for script in schema_scripts:
+            try:
+                data = json.loads(script.string or '{}')
+                
+                # Get @type (can be string or list)
+                schema_type = data.get('@type', '')
+                if isinstance(schema_type, list):
+                    schema_types = schema_type
+                else:
+                    schema_types = [schema_type]
+                
+                schemas_found.extend(schema_types)
+                
+                for t in schema_types:
+                    t_lower = t.lower()
+                    if 'organization' in t_lower:
+                        has_organization = True
+                    if 'article' in t_lower or 'blogpost' in t_lower:
+                        has_article = True
+                    if 'product' in t_lower:
+                        has_product = True
+                    if 'faq' in t_lower:
+                        has_faq = True
+                    if 'breadcrumb' in t_lower:
+                        has_breadcrumb = True
+                        
+            except:
+                continue
+        
+        return {
+            "has_schema": len(schemas_found) > 0,
+            "schema_types": schemas_found[:10],
+            "has_organization_schema": has_organization,
+            "has_article_schema": has_article,
+            "has_product_schema": has_product,
+            "has_faq_schema": has_faq,
+            "has_breadcrumb_schema": has_breadcrumb,
+            "rich_result_eligible": has_faq or has_product or has_article or has_breadcrumb
+        }

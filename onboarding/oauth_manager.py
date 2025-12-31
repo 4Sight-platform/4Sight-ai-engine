@@ -225,6 +225,22 @@ class OAuthManager:
             logger.info("[OAuth] ✓ Successfully refreshed access token")
             return token_data.get("access_token")
     
+    async def get_fresh_access_token(self, user_id: str) -> Dict[str, str]:
+        """
+        Get a fresh access token for the user.
+        Wrapper around refresh_access_token to match expected interface.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Dict with access_token or empty if failed
+        """
+        token = await self.refresh_access_token(user_id)
+        if token:
+            return {"access_token": token}
+        return {}
+
     def has_valid_credentials(self, user_id: str) -> bool:
         """
         Check if user has stored credentials.

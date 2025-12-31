@@ -223,20 +223,21 @@ class SignalEngine:
         else:
             return "needs_attention"  # For MVP, we use needs_attention instead of "weak"
     
-    def compute_on_page_scores(self, signals: Dict[str, Any]) -> List[Dict]:
+    def compute_on_page_scores(self, signals: Dict[str, Any], keywords: List[str] = None) -> List[Dict]:
         """
         Compute scores for all On-Page parameter groups.
         
         Args:
             signals: Dict with on-page signal data from crawler
+            keywords: User's tracked keywords for matching
             
         Returns:
             List of parameter group scores
         """
         results = []
         
-        # Page Topic & Keyword Targeting
-        page_topic_score = self._score_page_topic(signals)
+        # Page Topic & Keyword Targeting (with keyword matching)
+        page_topic_score = self._score_page_topic(signals, keywords)
         results.append({
             "group_id": "page_topic_keyword_targeting",
             "name": self.ON_PAGE_GROUPS["page_topic_keyword_targeting"]["name"],
@@ -287,30 +288,53 @@ class SignalEngine:
         
         return results
     
-    def _score_page_topic(self, signals: Dict) -> float:
-        """Score Page Topic & Keyword Targeting."""
+    def _score_page_topic(self, signals: Dict, keywords: List[str] = None) -> float:
+        """Score Page Topic & Keyword Targeting with keyword matching."""
         score = 0
         max_score = 100
         
-        # Check if content exists and has keywords (simplified)
-        if signals.get("word_count", 0) >= 300:
-            score += 30
-        elif signals.get("word_count", 0) >= 100:
-            score += 15
+        # Check if content exists
+        word_count = signals.get("word_count", 0)
+        if word_count >= 300:
+            score += 20
+        elif word_count >= 100:
+            score += 10
         
         # Has H1 with content
-        if signals.get("h1_text"):
-            score += 25
+        h1_text = signals.get("h1_text", "").lower()
+        if h1_text:
+            score += 15
         
         # First 100 words exist
-        if signals.get("first_100_words"):
-            score += 25
-        
-        # Adequate heading structure suggests topic coverage
-        if signals.get("h2_count", 0) >= 2:
-            score += 20
-        elif signals.get("h2_count", 0) >= 1:
+        first_100 = signals.get("first_100_words", "").lower()
+        if first_100:
             score += 10
+        
+        # Adequate heading structure
+        if signals.get("h2_count", 0) >= 2:
+            score += 10
+        elif signals.get("h2_count", 0) >= 1:
+            score += 5
+        
+        # === KEYWORD MATCHING ===
+        if keywords and len(keywords) > 0:
+            primary_kw = keywords[0].lower()
+            title_text = signals.get("title_tag", "").lower()
+            
+            # Keyword in title (+15)
+            if primary_kw in title_text:
+                score += 15
+            
+            # Keyword in H1 (+15)
+            if primary_kw in h1_text:
+                score += 15
+            
+            # Keyword in first 100 words (+10)
+            if primary_kw in first_100:
+                score += 10
+        else:
+            # If no keywords provided, give partial credit
+            score += 15
         
         return min(score, max_score)
     
@@ -460,8 +484,9 @@ class SignalEngine:
             "tab": "offpage"
         })
         
-        # Backlink Relevance - placeholder score (requires external data)
-        relevance_score = 60  # Default to needs_attention for MVP
+        # Backlink Relevance - uses authority distribution from backlink analyzer
+        health_scores = backlink_data.get("health_scores", {})
+        relevance_score = health_scores.get("domain_authority_score", 60)
         results.append({
             "group_id": "backlink_relevance",
             "name": self.OFF_PAGE_GROUPS["backlink_relevance"]["name"],
@@ -480,8 +505,18 @@ class SignalEngine:
             "tab": "offpage"
         })
         
-        # Brand Entity Authority - placeholder
-        brand_score = 60
+        # Brand Entity Authority - uses anchor text analysis for brand mentions
+        health_scores = backlink_data.get("health_scores", {})
+        anchor_dist = backlink_data.get("anchor_text_distribution", {})
+        branded_count = anchor_dist.get("branded", 0)
+        total = sum(anchor_dist.values()) if anchor_dist else 0
+        
+        if total > 0 and branded_count / total >= 0.3:
+            brand_score = 85  # Good brand presence
+        elif total > 0 and branded_count / total >= 0.15:
+            brand_score = 70  # Moderate brand presence
+        else:
+            brand_score = 55  # Weak brand presence
         results.append({
             "group_id": "brand_entity_authority",
             "name": self.OFF_PAGE_GROUPS["brand_entity_authority"]["name"],
@@ -490,8 +525,17 @@ class SignalEngine:
             "tab": "offpage"
         })
         
-        # Link Growth Stability - placeholder
-        growth_score = 70
+        # Link Growth Stability - uses dofollow ratio and link quality
+        dofollow_ratio = backlink_data.get("dofollow_ratio", 0.5)
+        health_scores = backlink_data.get("health_scores", {})
+        
+        # Balanced ratio (30-80%) is healthy
+        if 0.3 <= dofollow_ratio <= 0.8:
+            growth_score = health_scores.get("link_quality_score", 80)
+        elif 0.2 <= dofollow_ratio <= 0.9:
+            growth_score = 65
+        else:
+            growth_score = 50  # Suspicious ratio
         results.append({
             "group_id": "link_growth_stability",
             "name": self.OFF_PAGE_GROUPS["link_growth_stability"]["name"],
@@ -722,7 +766,8 @@ class SignalEngine:
         backlink_data: Dict,
         technical_data: Dict,
         cwv_data: Dict = None,
-        ai_governance: Dict = None
+        ai_governance: Dict = None,
+        keywords: List[str] = None
     ) -> Dict[str, List[Dict]]:
         """
         Compute all parameter scores across all tabs.
@@ -731,7 +776,7 @@ class SignalEngine:
             Dict with 'onpage', 'offpage', 'technical' keys
         """
         return {
-            "onpage": self.compute_on_page_scores(on_page_signals),
+            "onpage": self.compute_on_page_scores(on_page_signals, keywords),
             "offpage": self.compute_off_page_scores(backlink_data),
             "technical": self.compute_technical_scores(technical_data, cwv_data, ai_governance)
         }

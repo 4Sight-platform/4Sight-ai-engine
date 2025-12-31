@@ -243,7 +243,7 @@ class GSCDataService:
             "links": links_data
         }
     
-    def _calculate_totals(self, queries: List[Dict]) -> Dict[str, Any]:
+    def _calculate_totals(self, queries: List[Dict], filter_keywords: List[str] = None) -> Dict[str, Any]:
         """Calculate aggregate totals from query metrics."""
         if not queries:
             return {
@@ -255,17 +255,33 @@ class GSCDataService:
                 "keyword_count": 0
             }
         
-        total_clicks = sum(q["clicks"] for q in queries)
-        total_impressions = sum(q["impressions"] for q in queries)
+        # Filter queries if keywords provided
+        target_queries = queries
+        if filter_keywords:
+            target_queries = [q for q in queries if q["query"] in filter_keywords]
+            
+            # If filtration results in empty list, return zeros
+            if not target_queries:
+                return {
+                    "total_clicks": 0,
+                    "total_impressions": 0,
+                    "avg_ctr": 0.0,
+                    "avg_position": 0.0,
+                    "top10_count": 0,
+                    "keyword_count": 0
+                }
+        
+        total_clicks = sum(q["clicks"] for q in target_queries)
+        total_impressions = sum(q["impressions"] for q in target_queries)
         
         # Weighted average position (by impressions)
         if total_impressions > 0:
-            weighted_position = sum(q["position"] * q["impressions"] for q in queries) / total_impressions
+            weighted_position = sum(q["position"] * q["impressions"] for q in target_queries) / total_impressions
         else:
             weighted_position = 0.0
         
         avg_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0.0
-        top10_count = len([q for q in queries if q["position"] <= 10])
+        top10_count = len([q for q in target_queries if q["position"] <= 10])
         
         return {
             "total_clicks": total_clicks,
@@ -273,7 +289,7 @@ class GSCDataService:
             "avg_ctr": round(avg_ctr, 2),
             "avg_position": round(weighted_position, 1),
             "top10_count": top10_count,
-            "keyword_count": len(queries)
+            "keyword_count": len(target_queries)
         }
     
     def _calculate_changes(self, current: Dict, previous: Dict) -> Dict[str, float]:

@@ -9,11 +9,19 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlparse
 
+from Database.database import get_db
+from Database.models import (
+    AsIsScore, AsIsSummaryCache, OnPageSignal, BacklinkSignal, 
+    TechnicalSignal, CWVSignal, AICrawlGovernance
+)
+
 from .gsc_data_service import GSCDataService
 from .serp_service import SERPService
 from .crawler_service import CrawlerService
 from .signal_engine import SignalEngine
 from .competitor_scoring import CompetitorScoringService
+from .psi_service import PageSpeedService
+from .backlink_analyzer import BacklinkAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +38,14 @@ class AsIsStateService:
     - Score calculation
     """
     
-    def __init__(self, serp_api_key: str = None):
+    def __init__(self, serp_api_key: str = None, psi_api_key: str = None):
         self.serp_api_key = serp_api_key or os.getenv("SERP_API_KEY")
+        self.psi_api_key = psi_api_key or os.getenv("PSI_API_KEY")
         self.signal_engine = SignalEngine()
         self.competitor_service = CompetitorScoringService()
         self.crawler = CrawlerService()
+        self.backlink_analyzer = BacklinkAnalyzer()
+        self.psi_service = PageSpeedService(self.psi_api_key) if self.psi_api_key else None
     
     async def get_summary(
         self,
@@ -124,19 +135,51 @@ class AsIsStateService:
                 "data_available": False
             }
         
-        current = gsc_data.get("current", {}).get("totals", {})
-        changes = gsc_data.get("changes", {})
+        # Calculate metrics filtered by tracked keywords
+        # We need to re-calculate totals based on the filtered list
+        # instead of using the site-wide totals in gsc_data['current']['totals']
         
-        position_change = changes.get("position_change", 0)
-        top10_change = changes.get("top10_change", 0)
+        current_queries = gsc_data.get("current", {}).get("queries", [])
+        previous_queries = gsc_data.get("previous", {}).get("queries", [])
+        
+        # Helper to calculate totals for specific keywords
+        def calc_custom_totals(queries, keywords):
+            # Calculate totals manually since we need to filter
+            filtered = [q for q in queries if q["query"] in keywords] if keywords else queries
+            if not filtered:
+                return {"avg_position": 0, "top10_count": 0, "keyword_count": 0}
+            
+            total_clicks = sum(q.get("clicks", 0) for q in filtered)
+            total_impressions = sum(q.get("impressions", 0) for q in filtered)
+            
+            if total_impressions > 0:
+                avg_pos = sum(q.get("position", 0) * q.get("impressions", 0) for q in filtered) / total_impressions
+            else:
+                avg_pos = 0
+                
+            top10 = len([q for q in filtered if q.get("position", 0) <= 10])
+            
+            return {
+                "avg_position": round(avg_pos, 1),
+                "top10_count": top10,
+                "keyword_count": len(filtered)
+            }
+
+        # Calculate current and previous stats for tracked keywords
+        curr_stats = calc_custom_totals(current_queries, tracked_keywords)
+        prev_stats = calc_custom_totals(previous_queries, tracked_keywords)
+        
+        # Calculate changes
+        position_change = round(prev_stats["avg_position"] - curr_stats["avg_position"], 1)
+        top10_change = curr_stats["top10_count"] - prev_stats["top10_count"]
         
         return {
-            "avg_position": current.get("avg_position", 0),
+            "avg_position": curr_stats["avg_position"],
             "position_change": position_change,
             "position_change_direction": "up" if position_change > 0 else "down" if position_change < 0 else "neutral",
-            "top10_keywords": current.get("top10_count", 0),
+            "top10_keywords": curr_stats["top10_count"],
             "top10_change": top10_change,
-            "total_keywords": current.get("keyword_count", 0),
+            "total_keywords": curr_stats["keyword_count"],
             "tracked_keywords_count": len(tracked_keywords) if tracked_keywords else 0,
             "data_available": True
         }
@@ -207,7 +250,13 @@ class AsIsStateService:
         user_rankings = []
         if gsc_data:
             queries = gsc_data.get("current", {}).get("queries", [])
-            for q in queries[:20]:  # Top 20 queries
+            # Filter to tracked keywords if available
+            if tracked_keywords:
+                target_queries = [q for q in queries if q["query"] in tracked_keywords]
+            else:
+                target_queries = queries[:20]
+                
+            for q in target_queries:
                 user_rankings.append({
                     "keyword": q.get("query", ""),
                     "position": q.get("position", 100)
@@ -250,7 +299,8 @@ class AsIsStateService:
         site_url: str,
         priority_urls: List[str] = None,
         tab: str = "onpage",
-        status_filter: str = None
+        status_filter: str = None,
+        tracked_keywords: List[str] = None
     ) -> Dict[str, Any]:
         """
         Get AS-IS parameter scores for a specific tab.
@@ -271,20 +321,51 @@ class AsIsStateService:
         # Gather signals based on tab
         if tab == "onpage":
             signals = await self._gather_onpage_signals(priority_urls or [site_url])
-            parameters = self.signal_engine.compute_on_page_scores(signals)
+            parameters = self.signal_engine.compute_on_page_scores(signals, tracked_keywords)
         
         elif tab == "offpage":
             gsc_service = GSCDataService(access_token)
             links_data = await gsc_service.fetch_links(site_url)
+            
+            # Use enhanced backlink analyzer
+            linking_domains = links_data.get("top_linking_sites", [])
+            if linking_domains and len(linking_domains) > 0:
+                backlink_analysis = await self.backlink_analyzer.analyze_backlinks(
+                    domain, linking_domains, max_domains=10
+                )
+                health_scores = self.backlink_analyzer.compute_off_page_health(backlink_analysis)
+            else:
+                backlink_analysis = {}
+                health_scores = {}
+            
             backlink_data = {
                 "referring_domains": links_data.get("referring_domains", 0),
-                "anchor_text_distribution": {}
+                "dofollow_ratio": backlink_analysis.get("dofollow_ratio", 0.5),
+                "avg_authority_score": backlink_analysis.get("avg_authority_score", 50),
+                "anchor_text_distribution": backlink_analysis.get("anchor_distribution", {}),
+                "health_scores": health_scores
             }
             parameters = self.signal_engine.compute_off_page_scores(backlink_data)
         
         elif tab == "technical":
             technical_data = await self._gather_technical_signals(domain)
-            cwv_data = {}  # Would come from GSC CWV data
+            
+            # Fetch CWV data from PageSpeed Insights
+            cwv_data = {}
+            if self.psi_service and priority_urls:
+                try:
+                    cwv_result = await self.psi_service.get_cwv_both_devices(priority_urls[0])
+                    cwv_data = {
+                        "overall_status": cwv_result.get("overall_status", "needs_improvement"),
+                        "lcp_status": cwv_result.get("mobile", {}).get("lcp_status"),
+                        "inp_status": cwv_result.get("mobile", {}).get("inp_status"),
+                        "cls_status": cwv_result.get("mobile", {}).get("cls_status"),
+                        "mobile_pass": cwv_result.get("mobile_pass", False),
+                        "desktop_pass": cwv_result.get("desktop_pass", False)
+                    }
+                except Exception as e:
+                    logger.error(f"[AS-IS] PSI error: {e}")
+            
             ai_governance = await self.crawler.check_robots_txt(domain)
             llm_data = await self.crawler.check_llm_txt(domain)
             ai_governance.update(llm_data)
@@ -295,10 +376,38 @@ class AsIsStateService:
         else:
             parameters = []
         
-        # Apply status filter
         if status_filter:
             parameters = [p for p in parameters if p["status"] == status_filter]
         
+        # Save to DB (Persistence on Load)
+        try:
+            import json
+            db = next(get_db())
+            today = date.today()
+            
+            # Delete existing for this tab/user
+            db.query(AsIsScore).filter(
+                AsIsScore.user_id == user_id, 
+                AsIsScore.parameter_tab == tab
+            ).delete()
+            
+            for p in parameters:
+                 s = AsIsScore(
+                     user_id=user_id,
+                     parameter_tab=tab,
+                     parameter_group=p["group_id"],
+                     score=p.get("score", 0),
+                     status=p.get("status", "needs_attention"),
+                     details=json.dumps(p),
+                     snapshot_date=today
+                 )
+                 db.add(s)
+            db.commit()
+            db.close()
+        except Exception as e:
+            logger.error(f"[AS-IS] Error saving scores on load: {e}")
+            # Don't fail the request if save fails
+            
         # Calculate summary stats
         total = len(parameters)
         optimal_count = len([p for p in parameters if p["status"] == "optimal"])
@@ -492,41 +601,143 @@ class AsIsStateService:
     ) -> Dict[str, Any]:
         """
         Trigger a full data refresh for AS-IS State.
-        
-        Returns:
-            Dict with refresh status
+        Calculates all scores and saves to local database.
         """
+        import json
         refresh_start = datetime.now()
+        domain = urlparse(site_url).netloc.replace("www.", "")
+        
         results = {
             "gsc_data": False,
             "crawl_data": False,
             "serp_data": False,
-            "scores_computed": False
+            "scores_computed": False,
+            "db_save": False
         }
         
         try:
-            # Refresh GSC data
+            # 1. Fetch Off-Page Data (GSC Links)
             gsc_service = GSCDataService(access_token)
             gsc_data = await gsc_service.fetch_all_metrics(site_url)
             results["gsc_data"] = True
             
-            # Refresh crawl data for priority URLs
+            links_data = await gsc_service.fetch_links(site_url)
+            # Enhance with backlink analyzer
+            linking_domains = links_data.get("top_linking_sites", [])
+            if linking_domains:
+                backlink_analysis = await self.backlink_analyzer.analyze_backlinks(domain, linking_domains, max_domains=10)
+                health_scores = self.backlink_analyzer.compute_off_page_health(backlink_analysis)
+            else:
+                backlink_analysis = {}
+                health_scores = {}
+            
+            offpage_signals = {
+                "referring_domains": links_data.get("referring_domains", 0),
+                "dofollow_ratio": backlink_analysis.get("dofollow_ratio", 0.5),
+                "avg_authority_score": backlink_analysis.get("avg_authority_score", 50),
+                "anchor_text_distribution": backlink_analysis.get("anchor_distribution", {}),
+                "health_scores": health_scores
+            }
+            
+            # 2. Fetch On-Page Signals (Crawl)
+            onpage_signals = {}
             if priority_urls:
-                crawl_results = await self.crawler.crawl_multiple(priority_urls[:5])
-                results["crawl_data"] = True
+                crawl_results = await self.crawler.crawl_multiple(priority_urls[:3])
+                if crawl_results:
+                    # Flatten/Aggregate for scoring (using first page for MVP)
+                    first_res = crawl_results[0].get("signals", {})
+                    onpage_signals = first_res
+                    results["crawl_data"] = True
             
-            # Refresh SERP data (limited for API)
-            if self.serp_api_key and tracked_keywords:
-                serp_service = SERPService(self.serp_api_key)
-                domain = urlparse(site_url).netloc.replace("www.", "")
-                await serp_service.batch_analyze(tracked_keywords[:3], domain, competitors, max_keywords=3)
-                results["serp_data"] = True
+            # 3. Fetch Technical Signals
+            technical_signals = await self._gather_technical_signals(domain)
             
+            # 4. Fetch CWV
+            cwv_data = {}
+            if self.psi_service and priority_urls:
+                try:
+                    c = await self.psi_service.get_cwv_both_devices(priority_urls[0])
+                    cwv_data = {
+                        "overall_status": c.get("overall_status"),
+                        "lcp_status": c.get("mobile", {}).get("lcp_status"),
+                        "inp_status": c.get("mobile", {}).get("inp_status"),
+                        "cls_status": c.get("mobile", {}).get("cls_status")
+                    }
+                except: pass
+            
+            # 5. Fetch AI Governance
+            ai_gov = await self.crawler.check_robots_txt(domain)
+            
+            # 6. Compute All Scores
+            all_scores = self.signal_engine.compute_all_scores(
+                on_page_signals=onpage_signals,
+                backlink_data=offpage_signals,
+                technical_data=technical_signals,
+                cwv_data=cwv_data,
+                ai_governance=ai_gov,
+                keywords=tracked_keywords
+            )
             results["scores_computed"] = True
+            
+            # 7. Save to DB
+            db = next(get_db())
+            try:
+                # Save Scores (Clear old first)
+                db.query(AsIsScore).filter(AsIsScore.user_id == user_id).delete()
+                
+                today = date.today()
+                
+                for tab, items in all_scores.items():
+                    for item in items:
+                        s = AsIsScore(
+                            user_id=user_id,
+                            parameter_tab=tab,
+                            parameter_group=item["group_id"],
+                            score=item["score"],
+                            status=item["status"],
+                            details=json.dumps(item),
+                            snapshot_date=today
+                        )
+                        db.add(s)
+                
+                # Save Signals (Simplified: OnPage)
+                # Note: Signal tables usually unique by user_id in this schema based on previous view
+                # but models.py shows UserID is unique in *some* tables (TechnicalSignal) but maybe not others?
+                # We'll just upsert/replace.
+                
+                # OnPage
+                db.query(OnPageSignal).filter(OnPageSignal.user_id == user_id).delete()
+                ops = OnPageSignal(
+                    user_id=user_id,
+                    page_url=site_url, # Using site_url as the page_url
+                    title_tag=onpage_signals.get("title_tag"),
+                    meta_description=onpage_signals.get("meta_description"),
+                    h1_text=onpage_signals.get("h1_tag"), # Map h1_tag to h1_text
+                    word_count=onpage_signals.get("word_count", 0)
+                )
+                db.add(ops)
+                
+                db.commit()
+                results["db_save"] = True
+            except Exception as e:
+                db.rollback()
+                logger.error(f"DB Save Error: {e}")
+                results["error_db"] = str(e)
+            finally:
+                db.close()
             
         except Exception as e:
             logger.error(f"[AS-IS] Refresh error: {e}")
             results["error"] = str(e)
+        
+        refresh_end = datetime.now()
+        
+        return {
+            "status": "completed",
+            "results": results,
+            "duration_seconds": (refresh_end - refresh_start).total_seconds(),
+            "refreshed_at": refresh_end.isoformat()
+        }
         
         refresh_end = datetime.now()
         

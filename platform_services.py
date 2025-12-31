@@ -54,6 +54,31 @@ oauth_manager = OAuthManager(
 api_router = APIRouter(tags=["Platform Services"])
 
 
+@api_router.get(
+    "/profile/{user_id}",
+    summary="Get User Profile",
+    description="Returns current profile data for the user"
+)
+async def get_user_profile(user_id: str):
+    try:
+        profile_manager = get_profile_manager()
+        profile_data = profile_manager.get_profile(user_id)
+        
+        if not profile_data:
+            # User profile not found in DB (e.g. ghost session).
+            # Return partial to prevent frontend crash, but with no URL.
+            return {"user_id": user_id, "website_url": None, "business_name": "Guest User"}
+            
+        return profile_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Page 1: Business Info ====================
+
 # ==================== OAuth Endpoints ====================
 
 @api_router.get(
