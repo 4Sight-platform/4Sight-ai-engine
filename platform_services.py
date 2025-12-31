@@ -1284,3 +1284,269 @@ async def finalize_keyword_selection(user_id: str, request: KeywordSelectionRequ
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         service.cleanup()
+
+
+# ==================== AS-IS State API ====================
+
+from base_requests import (
+    AsIsSummaryRequest, AsIsParametersRequest, AsIsRefreshRequest, AsIsCompetitorsRequest,
+    AsIsSummaryResponse, AsIsParametersResponse, AsIsCompetitorsResponse, AsIsRefreshResponse
+)
+from asis.asis_service import AsIsStateService
+
+# Initialize AS-IS service with SERP API key
+asis_service = AsIsStateService(serp_api_key=os.getenv("SERP_API_KEY"))
+
+
+@api_router.post(
+    "/as-is/summary",
+    response_model=AsIsSummaryResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Get AS-IS Summary",
+    description="Get summary data for the four top cards (Traffic, Keywords, SERP Features, Competitors)"
+)
+async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
+    """
+    Get AS-IS summary data for the dashboard cards.
+    Requires an access token which should be refreshed before calling.
+    """
+    try:
+        # Get fresh access token
+        access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        if not access_token_result.get("access_token"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No valid access token. Please reconnect Google account."
+            )
+        
+        access_token = access_token_result["access_token"]
+        
+        # Get summary data
+        summary = await asis_service.get_summary(
+            user_id=request.user_id,
+            access_token=access_token,
+            site_url=request.site_url,
+            tracked_keywords=request.tracked_keywords,
+            competitors=request.competitors
+        )
+        
+        return AsIsSummaryResponse(
+            status="success",
+            message="AS-IS summary retrieved successfully",
+            user_id=request.user_id,
+            data=summary
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[AS-IS] Error getting summary: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving AS-IS summary: {str(e)}"
+        )
+
+
+@api_router.post(
+    "/as-is/parameters",
+    response_model=AsIsParametersResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Get AS-IS Parameters",
+    description="Get parameter scores for a specific tab (onpage, offpage, technical)"
+)
+async def get_asis_parameters(request: AsIsParametersRequest) -> AsIsParametersResponse:
+    """
+    Get AS-IS parameter scores for the specified tab.
+    Supports filtering by status (optimal, needs_attention).
+    """
+    try:
+        # Validate tab
+        valid_tabs = ["onpage", "offpage", "technical"]
+        if request.tab not in valid_tabs:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid tab. Must be one of: {', '.join(valid_tabs)}"
+            )
+        
+        # Validate filter
+        if request.status_filter and request.status_filter not in ["optimal", "needs_attention"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid filter. Must be 'optimal' or 'needs_attention'"
+            )
+        
+        # Get fresh access token
+        access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        access_token = access_token_result.get("access_token", "")
+        
+        # Get parameters
+        parameters = await asis_service.get_parameters(
+            user_id=request.user_id,
+            access_token=access_token,
+            site_url=request.site_url,
+            priority_urls=request.priority_urls,
+            tab=request.tab,
+            status_filter=request.status_filter
+        )
+        
+        return AsIsParametersResponse(
+            status="success",
+            message=f"AS-IS {request.tab} parameters retrieved",
+            user_id=request.user_id,
+            data=parameters
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[AS-IS] Error getting parameters: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving parameters: {str(e)}"
+        )
+
+
+@api_router.get(
+    "/as-is/parameters/{tab}/{group_id}/details",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Get Parameter Details",
+    description="Get detailed information about a specific parameter group"
+)
+async def get_asis_parameter_details(
+    tab: str,
+    group_id: str,
+    user_id: str
+) -> StandardResponse:
+    """
+    Get detailed sub-parameters, explanations, and recommendations for a parameter group.
+    """
+    try:
+        # Validate tab
+        if tab not in ["onpage", "offpage", "technical"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid tab"
+            )
+        
+        details = await asis_service.get_parameter_details(
+            user_id=user_id,
+            tab=tab,
+            group_id=group_id
+        )
+        
+        return StandardResponse(
+            status="success",
+            message="Parameter details retrieved",
+            user_id=user_id,
+            data=details
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[AS-IS] Error getting details: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving details: {str(e)}"
+        )
+
+
+@api_router.post(
+    "/as-is/competitors",
+    response_model=AsIsCompetitorsResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Get AS-IS Competitors",
+    description="Get competitor visibility scores and rankings"
+)
+async def get_asis_competitors(request: AsIsCompetitorsRequest) -> AsIsCompetitorsResponse:
+    """
+    Get competitor visibility scores and ranking.
+    Returns empty state if no competitors configured.
+    """
+    try:
+        # Get fresh access token
+        access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        access_token = access_token_result.get("access_token", "")
+        
+        competitors_data = await asis_service.get_competitors(
+            user_id=request.user_id,
+            access_token=access_token,
+            site_url=request.site_url,
+            competitors=request.competitors
+        )
+        
+        return AsIsCompetitorsResponse(
+            status="success",
+            message="Competitor data retrieved",
+            user_id=request.user_id,
+            data=competitors_data
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[AS-IS] Error getting competitors: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving competitors: {str(e)}"
+        )
+
+
+@api_router.post(
+    "/as-is/refresh",
+    response_model=AsIsRefreshResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Refresh AS-IS Data",
+    description="Trigger a full data refresh for AS-IS State"
+)
+async def refresh_asis_data(request: AsIsRefreshRequest) -> AsIsRefreshResponse:
+    """
+    Trigger a full refresh of AS-IS data.
+    This will:
+    - Fetch latest GSC data
+    - Crawl priority URLs
+    - Update SERP features
+    - Recompute all scores
+    """
+    try:
+        # Get fresh access token
+        access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        access_token = access_token_result.get("access_token", "")
+        
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No valid access token. Please reconnect Google account."
+            )
+        
+        refresh_result = await asis_service.refresh_data(
+            user_id=request.user_id,
+            access_token=access_token,
+            site_url=request.site_url,
+            priority_urls=request.priority_urls,
+            tracked_keywords=request.tracked_keywords,
+            competitors=request.competitors
+        )
+        
+        return AsIsRefreshResponse(
+            status="success",
+            message="AS-IS data refreshed",
+            user_id=request.user_id,
+            data=refresh_result
+        )
+    
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[AS-IS] Error refreshing data: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error refreshing data: {str(e)}"
+        )
+

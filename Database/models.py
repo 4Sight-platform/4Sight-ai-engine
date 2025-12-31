@@ -200,3 +200,269 @@ class KeywordUniverseItem(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     __table_args__ = (UniqueConstraint('user_id', 'keyword', name='uix_user_keyword'),)
+
+
+# ==================== AS-IS State Models ====================
+
+class GSCDailyMetrics(Base):
+    """GSC data snapshots - query and page level metrics"""
+    __tablename__ = "gsc_daily_metrics"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    period_type = Column(String(20), nullable=False)  # 'current' or 'previous'
+    metric_type = Column(String(20), nullable=False)  # 'query' or 'page'
+    query_or_page = Column(Text, nullable=False)
+    clicks = Column(Integer, default=0)
+    impressions = Column(Integer, default=0)
+    ctr = Column(Float, default=0.0)
+    position = Column(Float, default=0.0)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'snapshot_date', 'period_type', 'metric_type', 'query_or_page', 
+                        name='uix_gsc_metrics'),
+    )
+
+
+class TrackedKeyword(Base):
+    """User's tracked keywords for AS-IS monitoring"""
+    __tablename__ = "tracked_keywords"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    is_tracked = Column(Boolean, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'keyword', name='uix_tracked_keyword'),
+    )
+
+
+class KeywordPositionSnapshot(Base):
+    """Keyword position history for tracking changes"""
+    __tablename__ = "keyword_position_snapshots"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    period_type = Column(String(20), nullable=False)
+    position = Column(Float, nullable=True)
+    position_change = Column(Float, nullable=True)
+    in_top10 = Column(Boolean, default=False)
+    clicks = Column(Integer, default=0)
+    impressions = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class SERPFeaturePresence(Base):
+    """SERP features detected for keywords"""
+    __tablename__ = "serp_feature_presence"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    feature_type = Column(String(50), nullable=False)
+    domain_present = Column(Boolean, default=False)
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class CompetitorVisibilityScore(Base):
+    """Competitor SEO visibility scores"""
+    __tablename__ = "competitor_visibility_scores"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    competitor_domain = Column(String(255), nullable=False)
+    visibility_score = Column(Float, default=0.0)
+    rank = Column(Integer, nullable=True)
+    score_factors = Column(Text, nullable=True)  # JSON stored as text
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class CrawlPage(Base):
+    """Crawled page metadata"""
+    __tablename__ = "crawl_pages"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    page_url = Column(String(500), nullable=False)
+    last_crawled = Column(TIMESTAMP, nullable=True)
+    crawl_status = Column(String(50), default='pending')
+    http_status = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'page_url', name='uix_crawl_page'),
+    )
+
+
+class OnPageSignal(Base):
+    """On-page SEO signals extracted from crawled pages"""
+    __tablename__ = "onpage_signals"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    page_url = Column(String(500), nullable=False)
+    title_tag = Column(Text, nullable=True)
+    title_length = Column(Integer, default=0)
+    meta_description = Column(Text, nullable=True)
+    meta_description_length = Column(Integer, default=0)
+    h1_count = Column(Integer, default=0)
+    h1_text = Column(Text, nullable=True)
+    h2_count = Column(Integer, default=0)
+    h3_count = Column(Integer, default=0)
+    h4_count = Column(Integer, default=0)
+    h5_count = Column(Integer, default=0)
+    h6_count = Column(Integer, default=0)
+    canonical_url = Column(String(500), nullable=True)
+    canonical_self_referencing = Column(Boolean, default=False)
+    first_100_words = Column(Text, nullable=True)
+    word_count = Column(Integer, default=0)
+    internal_link_count = Column(Integer, default=0)
+    external_link_count = Column(Integer, default=0)
+    image_count = Column(Integer, default=0)
+    images_with_alt = Column(Integer, default=0)
+    images_without_alt = Column(Integer, default=0)
+    url_length = Column(Integer, default=0)
+    url_has_parameters = Column(Boolean, default=False)
+    url_depth = Column(Integer, default=0)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'page_url', name='uix_onpage_signal'),
+    )
+
+
+class BacklinkSignal(Base):
+    """Backlink data from GSC and analysis"""
+    __tablename__ = "backlink_signals"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    referring_domains = Column(Integer, default=0)
+    total_backlinks = Column(Integer, default=0)
+    dofollow_ratio = Column(Float, default=0.0)
+    anchor_text_distribution = Column(Text, nullable=True)  # JSON as text
+    top_linking_sites = Column(Text, nullable=True)  # JSON as text
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+class TechnicalSignal(Base):
+    """Technical SEO signals"""
+    __tablename__ = "technical_signals"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    indexed_pages = Column(Integer, default=0)
+    submitted_pages = Column(Integer, default=0)
+    index_coverage_ratio = Column(Float, default=0.0)
+    robots_txt_exists = Column(Boolean, default=False)
+    robots_txt_valid = Column(Boolean, default=False)
+    sitemap_exists = Column(Boolean, default=False)
+    sitemap_valid = Column(Boolean, default=False)
+    canonical_issues_count = Column(Integer, default=0)
+    duplicate_title_count = Column(Integer, default=0)
+    duplicate_description_count = Column(Integer, default=0)
+    https_enabled = Column(Boolean, default=False)
+    mixed_content_issues = Column(Integer, default=0)
+    trailing_slash_consistent = Column(Boolean, default=True)
+    www_consistent = Column(Boolean, default=True)
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+class CWVSignal(Base):
+    """Core Web Vitals signals from GSC"""
+    __tablename__ = "cwv_signals"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    url_group = Column(String(500), default='site-wide')
+    device_type = Column(String(20), default='mobile')
+    lcp_score = Column(Float, nullable=True)
+    lcp_status = Column(String(20), nullable=True)
+    inp_score = Column(Float, nullable=True)
+    inp_status = Column(String(20), nullable=True)
+    cls_score = Column(Float, nullable=True)
+    cls_status = Column(String(20), nullable=True)
+    overall_status = Column(String(20), nullable=True)
+    good_urls_count = Column(Integer, default=0)
+    needs_improvement_urls_count = Column(Integer, default=0)
+    poor_urls_count = Column(Integer, default=0)
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class AICrawlGovernance(Base):
+    """AI/LLM crawl governance settings"""
+    __tablename__ = "ai_crawl_governance"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    robots_ai_rules = Column(Text, nullable=True)  # JSON as text
+    llm_txt_detected = Column(Boolean, default=False)
+    llm_txt_content = Column(Text, nullable=True)
+    ai_crawlers_blocked = Column(Text, nullable=True)  # JSON as text
+    ai_crawlers_allowed = Column(Text, nullable=True)  # JSON as text
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+class AsIsScore(Base):
+    """Composite scores and status for AS-IS parameters"""
+    __tablename__ = "as_is_scores"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    parameter_tab = Column(String(20), nullable=False)
+    parameter_group = Column(String(100), nullable=False)
+    sub_parameter = Column(String(100), nullable=True)
+    score = Column(Float, default=0.0)
+    max_score = Column(Float, default=100.0)
+    status = Column(String(20), nullable=False)
+    details = Column(Text, nullable=True)  # JSON as text
+    recommendation = Column(Text, nullable=True)
+    snapshot_date = Column(Date, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'parameter_tab', 'parameter_group', 'sub_parameter', 'snapshot_date',
+                        name='uix_asis_score'),
+    )
+
+
+class AsIsSummaryCache(Base):
+    """Cached summary data for the four top cards"""
+    __tablename__ = "as_is_summary_cache"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    total_clicks = Column(Integer, default=0)
+    clicks_change = Column(Float, default=0.0)
+    total_impressions = Column(Integer, default=0)
+    impressions_change = Column(Float, default=0.0)
+    avg_position = Column(Float, default=0.0)
+    position_change = Column(Float, default=0.0)
+    top10_keywords = Column(Integer, default=0)
+    top10_change = Column(Integer, default=0)
+    features_present = Column(Text, nullable=True)  # JSON as text
+    features_count = Column(Integer, default=0)
+    your_rank = Column(Integer, nullable=True)
+    total_competitors = Column(Integer, default=0)
+    your_visibility_score = Column(Float, default=0.0)
+    last_updated = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
