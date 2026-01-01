@@ -1347,13 +1347,25 @@ async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
         
         access_token = access_token_result["access_token"]
         
+        # Fetch competitors from profile if not provided
+        competitors = request.competitors
+        if not competitors:
+            try:
+                pm = get_profile_manager()
+                profile = pm.get_profile(request.user_id)
+                final_comps = profile.get("final_competitors", [])
+                competitors = [c["domain"] for c in final_comps if c.get("domain")]
+            except Exception as e:
+                logger.warning(f"Could not fetch competitors from profile: {e}")
+                competitors = []
+
         # Get summary data
         summary = await asis_service.get_summary(
             user_id=request.user_id,
             access_token=access_token,
             site_url=request.site_url,
             tracked_keywords=request.tracked_keywords,
-            competitors=request.competitors
+            competitors=competitors
         )
         
         return AsIsSummaryResponse(

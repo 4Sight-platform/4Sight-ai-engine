@@ -67,6 +67,7 @@ class AsIsStateService:
         """
         # Initialize services
         gsc_service = GSCDataService(access_token)
+        serp_service = SERPService(self.serp_api_key) if self.serp_api_key else None
         
         # Fetch GSC data
         try:
@@ -74,14 +75,28 @@ class AsIsStateService:
         except Exception as e:
             logger.error(f"[AS-IS] Error fetching GSC data: {e}")
             gsc_data = None
+            
+        # Fetch SERP data (shared for SERP & Competitors)
+        serp_analysis = None
+        if serp_service and tracked_keywords:
+            try:
+                domain = urlparse(site_url).netloc.replace("www.", "")
+                serp_analysis = await serp_service.batch_analyze(
+                    keywords=tracked_keywords[:5],
+                    target_domain=domain,
+                    competitor_domains=competitors[:5] if competitors else None,
+                    max_keywords=5
+                )
+            except Exception as e:
+                logger.error(f"[AS-IS] Error fetching SERP data: {str(e)}")
         
         # Build summary
         summary = {
             "organic_traffic": self._build_traffic_card(gsc_data),
             "keywords_performance": self._build_keywords_card(gsc_data, tracked_keywords),
-            "serp_features": await self._build_serp_card(site_url, tracked_keywords),
-            "competitor_rank": await self._build_competitor_card(
-                site_url, tracked_keywords, competitors, gsc_data
+            "serp_features": self._build_serp_card(serp_analysis),
+            "competitor_rank": self._build_competitor_card(
+                site_url, tracked_keywords, competitors, gsc_data, serp_analysis
             ),
             "last_updated": datetime.now().isoformat()
         }
@@ -124,7 +139,7 @@ class AsIsStateService:
         tracked_keywords: List[str] = None
     ) -> Dict[str, Any]:
         """Build Keywords Performance card data."""
-        if not gsc_data:
+        if not gsc_data or not tracked_keywords:
             return {
                 "avg_position": 0,
                 "position_change": 0,
@@ -132,46 +147,106 @@ class AsIsStateService:
                 "top10_keywords": 0,
                 "top10_change": 0,
                 "total_keywords": 0,
+                "tracked_keywords_count": 0,
                 "data_available": False
             }
-        
-        # Calculate metrics filtered by tracked keywords
-        # We need to re-calculate totals based on the filtered list
-        # instead of using the site-wide totals in gsc_data['current']['totals']
         
         current_queries = gsc_data.get("current", {}).get("queries", [])
         previous_queries = gsc_data.get("previous", {}).get("queries", [])
         
-        # Helper to calculate totals for specific keywords
-        def calc_custom_totals(queries, keywords):
-            # Calculate totals manually since we need to filter
-            filtered = [q for q in queries if q["query"] in keywords] if keywords else queries
-            if not filtered:
-                return {"avg_position": 0, "top10_count": 0, "keyword_count": 0}
+        # Convert GSC lists to dictionaries for fast lookup
+        # Map: keyword -> {clicks, impressions, position}
+        curr_map = {q["query"]: q for q in current_queries}
+        prev_map = {q["query"]: q for q in previous_queries}
+        
+        # Helper to calculate stats and get top keywords
+        def calc_targeted_stats(query_map, prev_query_map, target_list):
+            if not target_list:
+                return {"avg_position": 0, "top10_count": 0, "ranked_count": 0, "list": []}
             
-            total_clicks = sum(q.get("clicks", 0) for q in filtered)
-            total_impressions = sum(q.get("impressions", 0) for q in filtered)
+            total_position = 0
+            ranked_count = 0
+            top10_count = 0
+            details_list = []
             
-            if total_impressions > 0:
-                avg_pos = sum(q.get("position", 0) * q.get("impressions", 0) for q in filtered) / total_impressions
-            else:
-                avg_pos = 0
+            for kw in target_list:
+                kw_norm = kw.lower().strip()
                 
-            top10 = len([q for q in filtered if q.get("position", 0) <= 10])
+                # Current Data
+                data = query_map.get(kw_norm)
+                # Previous Data (for change calculation)
+                prev_data = prev_query_map.get(kw_norm)
+                
+                if data:
+                    pos = data.get("position", 101)
+                    ranked_count += 1
+                    total_position += pos
+                    if pos <= 10:
+                        top10_count += 1
+                else:
+                    pos = 101 # Penalty for not ranking
+                    total_position += 100 # Add to total for average calc
+
+                # Calculate Change
+                prev_pos = prev_data.get("position", 101) if prev_data else 101
+                
+                # Change logic: Lower position is better. 
+                # Prev 50 -> Curr 40 = +10 Improvement.
+                change_val = prev_pos - pos
+                
+                change_str = f"+{int(change_val)}" if change_val > 0 else f"{int(change_val)}"
+                
+                details_list.append({
+                    "keyword": kw,
+                    "position": int(pos) if pos <= 100 else 101, # Keep as number for sorting
+                    "position_display": str(int(pos)) if pos <= 100 else ">100",
+                    "change": change_str,
+                    "isTop": pos <= 10
+                })
+
+            # Sort by position (best rank first)
+            details_list.sort(key=lambda x: x["position"])
+            
+            # Format for frontend (convert position back to display string if needed, mostly handled above)
+            final_list = []
+            for item in details_list[:5]: # Top 5 only
+                 final_list.append({
+                     "keyword": item["keyword"],
+                     "position": item["position_display"] if item["position"] <= 100 else "-",
+                     "change": item["change"],
+                     "isTop": item["isTop"]
+                 })
+
+            avg_pos = total_position / len(target_list) if target_list else 0
             
             return {
                 "avg_position": round(avg_pos, 1),
-                "top10_count": top10,
-                "keyword_count": len(filtered)
+                "top10_count": top10_count,
+                "ranked_count": ranked_count,
+                "list": final_list
             }
 
-        # Calculate current and previous stats for tracked keywords
-        curr_stats = calc_custom_totals(current_queries, tracked_keywords)
-        prev_stats = calc_custom_totals(previous_queries, tracked_keywords)
+        # Calculate metrics using both maps
+        curr_stats = calc_targeted_stats(curr_map, prev_map, tracked_keywords)
+        
+        # Calculate distinct stats for Previous period just for the aggregated numbers comparison
+        # (We already did per-keyword change in the main loop above, but need global avg change)
+        def calc_prev_totals(query_map, target_list):
+            if not target_list: return {"avg_position": 0, "top10_count": 0}
+            total = 0
+            top10 = 0
+            for kw in target_list:
+                data = query_map.get(kw.lower().strip())
+                pos = data.get("position", 101) if data else 100
+                total += pos if data else 100
+                if data and pos <= 10: top10 += 1
+            return {"avg_position": total / len(target_list), "top10_count": top10}
+
+        prev_stats_totals = calc_prev_totals(prev_map, tracked_keywords)
         
         # Calculate changes
-        position_change = round(prev_stats["avg_position"] - curr_stats["avg_position"], 1)
-        top10_change = curr_stats["top10_count"] - prev_stats["top10_count"]
+        position_change = round(prev_stats_totals["avg_position"] - curr_stats["avg_position"], 1)
+        top10_change = curr_stats["top10_count"] - prev_stats_totals["top10_count"]
         
         return {
             "avg_position": curr_stats["avg_position"],
@@ -179,62 +254,44 @@ class AsIsStateService:
             "position_change_direction": "up" if position_change > 0 else "down" if position_change < 0 else "neutral",
             "top10_keywords": curr_stats["top10_count"],
             "top10_change": top10_change,
-            "total_keywords": curr_stats["keyword_count"],
-            "tracked_keywords_count": len(tracked_keywords) if tracked_keywords else 0,
+            "total_keywords": curr_stats["ranked_count"], # How many we actually found data for
+            "tracked_keywords_count": len(tracked_keywords), # How many we are trying to track
+            "ranked_keywords": curr_stats["list"], # Top 5 list
             "data_available": True
         }
     
-    async def _build_serp_card(
+    def _build_serp_card(
         self,
-        site_url: str,
-        tracked_keywords: List[str] = None
+        serp_analysis: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """Build SERP Features card data."""
-        if not self.serp_api_key or not tracked_keywords:
+        """Build SERP Features card data from pre-fetched analysis."""
+        if not serp_analysis:
             return {
                 "features_count": 0,
                 "features_present": [],
                 "domain_in_features": 0,
+                "top10_rate": 0,
                 "data_available": False,
                 "message": "SERP data not available"
             }
         
-        domain = urlparse(site_url).netloc.replace("www.", "")
-        
-        try:
-            serp_service = SERPService(self.serp_api_key)
-            # Limit to first 5 keywords for MVP (API rate limiting)
-            analysis = await serp_service.batch_analyze(
-                tracked_keywords[:5],
-                domain,
-                max_keywords=5
-            )
-            
-            return {
-                "features_count": len(analysis.get("unique_features_found", [])),
-                "features_present": analysis.get("unique_features_found", []),
-                "domain_in_features": len(analysis.get("target_feature_presence", {})),
-                "top10_rate": analysis.get("top10_rate", 0),
-                "data_available": True
-            }
-        except Exception as e:
-            logger.error(f"[AS-IS] SERP analysis error: {e}")
-            return {
-                "features_count": 0,
-                "features_present": [],
-                "domain_in_features": 0,
-                "data_available": False,
-                "message": str(e)
-            }
+        return {
+            "features_count": len(serp_analysis.get("unique_features_found", [])),
+            "features_present": serp_analysis.get("unique_features_found", []),
+            "domain_in_features": len(serp_analysis.get("target_feature_presence", {})),
+            "top10_rate": serp_analysis.get("top10_rate", 0),
+            "data_available": True
+        }
     
-    async def _build_competitor_card(
+    def _build_competitor_card(
         self,
         site_url: str,
         tracked_keywords: List[str] = None,
         competitors: List[str] = None,
-        gsc_data: Dict = None
+        gsc_data: Dict = None,
+        serp_analysis: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """Build Competitor Rank card data."""
+        """Build Competitor Rank card data with real scoring if available."""
         if not competitors:
             return {
                 "your_rank": None,
@@ -245,6 +302,7 @@ class AsIsStateService:
             }
         
         domain = urlparse(site_url).netloc.replace("www.", "")
+        total_kws = len(tracked_keywords) if tracked_keywords else 20
         
         # Calculate user's score based on GSC data
         user_rankings = []
@@ -265,18 +323,45 @@ class AsIsStateService:
         user_score_data = self.competitor_service.compute_visibility_score(
             domain,
             user_rankings,
-            total_keywords=len(tracked_keywords) if tracked_keywords else 20
+            total_keywords=total_kws
         )
         
-        # For MVP, we'll estimate competitor scores
-        # In production, this would use actual SERP data for competitors
+        # Calculate Competitor Scores using SERP Analysis
         competitor_scores = []
-        for comp in competitors[:5]:
-            # Placeholder scores - would be calculated from SERP data
-            competitor_scores.append({
-                "domain": comp,
-                "visibility_score": 50 + (hash(comp) % 40)  # Pseudo-random for demo
-            })
+        
+        if serp_analysis and serp_analysis.get("results"):
+            # Real Data Logic
+            # Group rankings by competitor
+            comp_rankings = {c: [] for c in competitors}
+            
+            for res in serp_analysis["results"]:
+                kw = res.get("keyword")
+                for entry in res.get("competitors_in_top10", []):
+                    c_domain = entry.get("domain")
+                    
+                    found_comp = next((c for c in competitors if c.lower() in c_domain.lower() or c_domain.lower() in c.lower()), None)
+                    if found_comp:
+                        comp_rankings[found_comp].append({
+                            "keyword": kw,
+                            "position": entry.get("position", 100)
+                        })
+
+            for comp in competitors[:5]:
+                rankings = comp_rankings.get(comp, [])
+                score_data = self.competitor_service.compute_visibility_score(
+                    comp,
+                    rankings,
+                    total_keywords=total_kws
+                )
+                competitor_scores.append(score_data)
+                
+        else:
+            # Fallback Logic (MVP / Mock)
+            for comp in competitors[:5]:
+                competitor_scores.append({
+                    "domain": comp,
+                    "visibility_score": 50 + (hash(comp) % 40)
+                })
         
         ranking_data = self.competitor_service.rank_competitors(
             domain,

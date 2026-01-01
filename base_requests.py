@@ -276,6 +276,8 @@ class KeywordsCardData(BaseModel):
     top10_keywords: int = 0
     top10_change: int = 0
     total_keywords: int = 0
+    tracked_keywords_count: int = 0
+    ranked_keywords: List[Dict[str, Any]] = []
     data_available: bool = False
 
 
@@ -312,6 +314,7 @@ class ParameterItem(BaseModel):
     score: float
     status: str
     tab: str
+    details: Optional[Dict[str, Any]] = None
 
 
 class AsIsParametersResponse(BaseModel):

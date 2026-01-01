@@ -390,9 +390,9 @@ class ProfileManager:
                 })
             
             # Fetch Selected Keywords from keyword_universe_items
-            selected_kws = db.query(KeywordUniverseItem).filter(
-                KeywordUniverseItem.user_id == user_id,
-                KeywordUniverseItem.is_selected == True
+            selected_kws = db.query(OnboardingKeyword).filter(
+                OnboardingKeyword.user_id == user_id,
+                OnboardingKeyword.is_selected == True
             ).all()
             data['selected_keywords'] = [kw.keyword for kw in selected_kws]
             
