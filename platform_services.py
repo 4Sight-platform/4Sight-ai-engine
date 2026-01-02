@@ -36,7 +36,10 @@ from base_requests import (
 from onboarding.scraper_services.scraper import scrape_business_description
 from onboarding.fetch_profile_data import get_profile_manager
 from onboarding.keyword_planner.planner_service import KeywordPlannerService
+from onboarding.keyword_planner.planner_service import KeywordPlannerService
 from onboarding.oauth_manager import OAuthManager
+from governance_dashboard.as_is import GovernanceAsIsService
+
 
 
 # Configure logging
@@ -1912,3 +1915,136 @@ async def refresh_goals(user_id: str) -> StandardResponse:
     finally:
         db.close()
 
+
+# ==================== Governance As-Is Endpoints ====================
+
+@api_router.get(
+    "/governance/asis/performance/{user_id}",
+    summary="Get Governance As-Is Performance",
+    description="Returns overall performance scores with baseline comparisons"
+)
+async def get_governance_performance(user_id: str):
+    """Get high-level performance metrics for governance dashboard."""
+    try:
+        from Database.database import get_db
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        return service.get_performance_overview(user_id)
+    except Exception as e:
+        logger.error(f"Error fetching governance performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get(
+    "/governance/asis/categories/{user_id}",
+    summary="Get Governance As-Is Categories",
+    description="Returns detailed category performance breakdown"
+)
+async def get_governance_categories(user_id: str, category: str = "onpage"):
+    """Get detailed category metrics with baseline deltas."""
+    try:
+        from Database.database import get_db
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        return service.get_category_performance(user_id, category)
+    except Exception as e:
+        logger.error(f"Error fetching governance categories: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.get(
+    "/governance/asis/timeline/{user_id}",
+    summary="Get Governance Progress Timeline",
+    description="Returns recent improvement events"
+)
+async def get_governance_timeline(user_id: str, limit: int = 10):
+    """Get progress timeline for governance dashboard."""
+    try:
+        from Database.database import get_db
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        return service.get_progress_timeline(user_id, limit)
+    except Exception as e:
+        logger.error(f"Error fetching governance timeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@api_router.post(
+    "/governance/asis/baseline/{user_id}",
+    summary="Capture As-Is Baseline",
+    description="Capture current state as baseline for future comparisons"
+)
+async def capture_asis_baseline(user_id: str):
+    """Capture current performance as baseline."""
+    try:
+        from Database.database import get_db
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        success = service.capture_baseline(user_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to capture baseline")
+        return {"status": "success", "message": "Baseline captured successfully"}
+    except Exception as e:
+        logger.error(f"Error capturing baseline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.post(
+    "/governance/asis/refresh/{user_id}",
+    summary="Refresh As-Is Data",
+    description="Triggers a full refresh of As-Is performance data (GSC, Crawl, SERP)"
+)
+async def refresh_governance_data(user_id: str):
+    """Trigger data refresh."""
+    try:
+        from Database.database import get_db
+        pm = get_profile_manager()
+        profile = pm.get_profile(user_id)
+        
+        if not profile:
+            raise HTTPException(status_code=404, detail="User profile not found")
+            
+        site_url = profile.get("website_url")
+        if not site_url:
+            raise HTTPException(status_code=400, detail="Website URL not configured")
+
+        # Get fresh access token
+        access_token = await oauth_manager.refresh_access_token(user_id)
+        if not access_token:
+             # If no token, we can still try to crawl public data, but GSC will fail.
+             # passing empty string might cause GSC service to error or skip.
+             # For now, let's assume we proceed and GSC service handles it gracefully or fails.
+             access_token = ""
+             
+        # Extract keywords and competitors from profile if available
+        # Profile keywords format depends on how they were saved. 
+        # Usually 'keywords' key.
+        tracked_keywords = []
+        if profile.get("keywords"):
+             # It might be a list of strings or dicts
+             raw_kws = profile.get("keywords")
+             if raw_kws and isinstance(raw_kws[0], dict):
+                 tracked_keywords = [k.get("keyword") for k in raw_kws if k.get("keyword")]
+             elif raw_kws and isinstance(raw_kws[0], str):
+                 tracked_keywords = raw_kws
+                 
+        competitors = profile.get("competitors", [])
+
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        
+        # Reuse the existing refresh_data logic from base service
+        # We need to make sure we don't need to instantiate it differently. 
+        # GovernanceAsIsService takes db_session, AsIsStateService takes api keys.
+        # GovernanceAsIsService calls super().__init__() which sets keys from env.
+        
+        result = await service.refresh_data(
+            user_id=user_id,
+            access_token=access_token,
+            site_url=site_url,
+            tracked_keywords=tracked_keywords,
+            competitors=competitors
+        )
+        
+        return {"status": "success", "message": "Data refresh completed", "details": result}
+        
+    except Exception as e:
+        logger.error(f"Error refreshing governance data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -476,6 +476,8 @@ class AsIsScore(Base):
     sub_parameter = Column(String(100), nullable=True)
     score = Column(Float, default=0.0)
     max_score = Column(Float, default=100.0)
+    baseline_score = Column(Float, nullable=True)  # Initial baseline score
+    is_baseline = Column(Boolean, default=False)   # Flag for baseline snapshots
     status = Column(String(20), nullable=False)
     details = Column(Text, nullable=True)  # JSON as text
     recommendation = Column(Text, nullable=True)
@@ -508,8 +510,49 @@ class AsIsSummaryCache(Base):
     your_rank = Column(Integer, nullable=True)
     total_competitors = Column(Integer, default=0)
     your_visibility_score = Column(Float, default=0.0)
+    
+    # Baseline Metrics
+    baseline_total_clicks = Column(Integer, nullable=True)
+    baseline_total_impressions = Column(Integer, nullable=True)
+    baseline_avg_position = Column(Float, nullable=True)
+    baseline_top10_keywords = Column(Integer, nullable=True)
+    baseline_features_count = Column(Integer, nullable=True)
+    baseline_your_rank = Column(Integer, nullable=True)
+    baseline_visibility_score = Column(Float, nullable=True)
+    baseline_captured_at = Column(TIMESTAMP, nullable=True)
+    
     last_updated = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class AsIsProgressTimeline(Base):
+    """Timeline of performance changes and improvements"""
+    __tablename__ = "asis_progress_timeline"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Event Information
+    event_type = Column(String(50), nullable=False)  # 'score_improvement', 'metric_change', 'milestone'
+    event_title = Column(String(500), nullable=False)
+    event_description = Column(Text, nullable=True)
+    
+    # Categorization
+    category = Column(String(20), nullable=True)  # 'onpage', 'offpage', 'technical', 'overall'
+    parameter_group = Column(String(100), nullable=True)
+    
+    # Metrics
+    metric_name = Column(String(100), nullable=True)
+    old_value = Column(Float, nullable=True)
+    new_value = Column(Float, nullable=True)
+    change_delta = Column(Float, nullable=True)
+    
+    # Timestamp
+    event_timestamp = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        CheckConstraint("event_type IN ('score_improvement', 'score_decline', 'metric_change', 'milestone', 'baseline_captured')", name='chk_event_type'),
+    )
 
 
 # ==================== ACTION PLAN Models ====================
