@@ -202,6 +202,51 @@ class KeywordUniverseItem(Base):
     __table_args__ = (UniqueConstraint('user_id', 'keyword', name='uix_user_keyword'),)
 
 
+class StrategyGoal(Base):
+    """Strategy goals tracking with 90-day cycles"""
+    __tablename__ = "strategy_goals"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Goal Identification
+    goal_type = Column(String(50), nullable=False)  # 'organic-traffic', 'keyword-rankings', etc.
+    goal_category = Column(String(20), nullable=False)  # 'priority' or 'additional'
+    
+    # Cycle Management
+    cycle_start_date = Column(Date, nullable=False)
+    cycle_end_date = Column(Date, nullable=False)  # 90 days from start
+    is_locked = Column(Boolean, default=True)
+    
+    # Metrics
+    baseline_value = Column(String(100), nullable=True)  # Current value at cycle start
+    current_value = Column(String(100), nullable=True)   # Updated monthly
+    target_value = Column(String(100), nullable=False)  # Target for this cycle
+    
+    # Metadata
+    unit = Column(String(50), nullable=False)  # 'visitors/month', 'DA points', etc.
+    target_type = Column(String(20), nullable=False)  # 'growth', 'range', 'slabs', 'paused'
+    
+    # For keyword-rankings goal (slab distribution)
+    from sqlalchemy.dialects.postgresql import JSONB
+    slab_data = Column(JSONB, nullable=True)
+    
+    # Progress Tracking
+    progress_percentage = Column(Float, default=0.0)
+    last_calculated_at = Column(TIMESTAMP, nullable=True)
+    
+    # Timestamps
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'goal_type', 'cycle_start_date', name='uix_user_goal_cycle'),
+        CheckConstraint("goal_type IN ('organic-traffic', 'keyword-rankings', 'serp-features', 'avg-position', 'impressions', 'domain-authority')", name='chk_goal_type'),
+        CheckConstraint("goal_category IN ('priority', 'additional')", name='chk_goal_category'),
+        CheckConstraint("target_type IN ('growth', 'range', 'slabs', 'paused')", name='chk_target_type'),
+    )
+
+
 # ==================== AS-IS State Models ====================
 
 class GSCDailyMetrics(Base):
@@ -465,4 +510,93 @@ class AsIsSummaryCache(Base):
     your_visibility_score = Column(Float, default=0.0)
     last_updated = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+# ==================== ACTION PLAN Models ====================
+
+class ActionPlanTask(Base):
+    """SEO action plan tasks"""
+    __tablename__ = "action_plan_tasks"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Task Information
+    task_title = Column(String(500), nullable=False)
+    task_description = Column(Text, nullable=True)
+    category = Column(String(20), nullable=False)  # 'onpage', 'offpage', 'technical'
+    
+    # Priority & Effort
+    priority = Column(String(20), nullable=False)  # 'high', 'medium', 'low'
+    impact_score = Column(Float, default=0.0)
+    effort_score = Column(Float, default=0.0)
+    
+    # Status Tracking
+    status = Column(String(20), nullable=False, default='not_started')
+    
+    # Categorization
+    parameter_group = Column(String(100), nullable=True)
+    sub_parameter = Column(String(100), nullable=True)
+    
+    # Goal Alignment
+    related_goal = Column(String(255), nullable=True)
+    
+    # Metrics
+    affected_pages_count = Column(Integer, default=0)
+    
+    # Metadata
+    impact_description = Column(Text, nullable=True)
+    effort_description = Column(String(50), nullable=True)  # 'Low', 'Medium', 'High'
+    recommendation = Column(Text, nullable=True)
+    
+    # Timestamps
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    completed_at = Column(TIMESTAMP, nullable=True)
+    
+    __table_args__ = (
+        CheckConstraint("category IN ('onpage', 'offpage', 'technical')", name='chk_category'),
+        CheckConstraint("priority IN ('high', 'medium', 'low')", name='chk_priority'),
+        CheckConstraint("status IN ('not_started', 'in_progress', 'completed')", name='chk_status'),
+        CheckConstraint("effort_description IN ('Low', 'Medium', 'High')", name='chk_effort'),
+    )
+
+
+class ActionPlanTaskPage(Base):
+    """Junction table for task-page relationships"""
+    __tablename__ = "action_plan_task_pages"
+    
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("action_plan_tasks.id", ondelete="CASCADE"), nullable=False)
+    page_url = Column(String(500), nullable=False)
+    
+    # Issue Details
+    issue_description = Column(Text, nullable=True)
+    current_value = Column(Text, nullable=True)
+    recommended_value = Column(Text, nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class ActionPlanTaskHistory(Base):
+    """Audit trail for task status changes"""
+    __tablename__ = "action_plan_task_history"
+    
+    id = Column(Integer, primary_key=True)
+    task_id = Column(Integer, ForeignKey("action_plan_tasks.id", ondelete="CASCADE"), nullable=False)
+    
+    # Status Change
+    old_status = Column(String(20), nullable=True)
+    new_status = Column(String(20), nullable=False)
+    
+    # Notes
+    notes = Column(Text, nullable=True)
+    
+    # Timestamp
+    changed_at = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        CheckConstraint("old_status IN ('not_started', 'in_progress', 'completed')", name='chk_old_status'),
+        CheckConstraint("new_status IN ('not_started', 'in_progress', 'completed')", name='chk_new_status'),
+    )
 

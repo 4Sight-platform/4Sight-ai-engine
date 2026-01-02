@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastapi import APIRouter, HTTPException, status
 from starlette.responses import HTMLResponse
 import logging
+from typing import Optional
 
 from base_requests import (
     Page1BusinessInfoRequest,
@@ -1586,4 +1587,328 @@ async def refresh_asis_data(request: AsIsRefreshRequest) -> AsIsRefreshResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error refreshing data: {str(e)}"
         )
+
+
+# ==================== ACTION PLAN API ====================
+
+from action_plan_service import ActionPlanService
+from base_requests import ActionPlanGenerateRequest, ActionPlanTasksRequest, ActionPlanUpdateStatusRequest
+
+
+@api_router.post(
+    "/action-plan/generate",
+    response_model=StandardResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Action Plan"],
+    summary="Generate Action Plan",
+    description="Generate action plan tasks from As-Is state data"
+)
+async def generate_action_plan(request: ActionPlanGenerateRequest) -> StandardResponse:
+    """
+    Generate action plan based on As-Is audit data.
+    Auto-generates tasks categorized as On-Page, Off-Page, and Technical/Core Vitals.
+    """
+    from Database.database import get_db
+    
+    db = next(get_db())
+    service = ActionPlanService(db)
+    
+    try:
+        result = service.generate_action_plan(request.user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Action plan generated successfully",
+            user_id=request.user_id,
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"[Action Plan] Error generating plan: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating action plan: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/action-plan/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Action Plan"],
+    summary="Get Action Plan Tasks",
+    description="Get action plan tasks with optional filters"
+)
+async def get_action_plan_tasks(
+    user_id: str,
+    category: Optional[str] = None,
+    priority: Optional[str] = None,
+    status_filter: Optional[str] = None
+) -> StandardResponse:
+    """
+    Get action plan tasks with optional filtering.
+    
+    Query params:
+        - category: 'onpage', 'offpage', or 'technical'
+        - priority: 'high', 'medium', or 'low'
+        - status_filter: 'not_started', 'in_progress', or 'completed'
+    """
+    from Database.database import get_db
+    
+    db = next(get_db())
+    service = ActionPlanService(db)
+    
+    try:
+        tasks = service.get_tasks(
+            user_id=user_id,
+            category=category,
+            priority=priority,
+            status=status_filter
+        )
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(tasks)} tasks",
+            user_id=user_id,
+            data={"tasks": tasks, "count": len(tasks)}
+        )
+    except Exception as e:
+        logger.error(f"[Action Plan] Error getting tasks: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving tasks: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/action-plan/{user_id}/summary",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Action Plan"],
+    summary="Get Action Plan Summary",
+    description="Get task counts by status"
+)
+async def get_action_plan_summary(user_id: str) -> StandardResponse:
+    """
+    Get action plan summary with task counts.
+    Returns total, not_started, in_progress, and completed counts.
+    """
+    from Database.database import get_db
+    
+    db = next(get_db())
+    service = ActionPlanService(db)
+    
+    try:
+        summary = service.get_summary(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Summary retrieved",
+            user_id=user_id,
+            data=summary
+        )
+    except Exception as e:
+        logger.error(f"[Action Plan] Error getting summary: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving summary: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.patch(
+    "/action-plan/task/{task_id}/status",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Action Plan"],
+    summary="Update Task Status",
+    description="Update task status (not_started, in_progress, completed)"
+)
+async def update_task_status(
+    task_id: int,
+    request: ActionPlanUpdateStatusRequest
+) -> StandardResponse:
+    """
+    Update task status and create audit trail entry.
+    """
+    from Database.database import get_db
+    
+    db = next(get_db())
+    service = ActionPlanService(db)
+    
+    try:
+        # Validate status
+        valid_statuses = ['not_started', 'in_progress', 'completed']
+        if request.new_status not in valid_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        
+        updated_task = service.update_task_status(
+            task_id=task_id,
+            user_id=request.user_id,
+            new_status=request.new_status,
+            notes=request.notes
+        )
+        
+        return StandardResponse(
+            status="success",
+            message=f"Task status updated to {request.new_status}",
+            user_id=request.user_id,
+            data={"task": updated_task}
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve)
+        )
+    except Exception as e:
+        logger.error(f"[Action Plan] Error updating task status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating task status: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+# ==================== Strategy Goals Endpoints ====================
+
+@api_router.get(
+    "/strategy/goals",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Strategy Goals"],
+    summary="Get User Goals",
+    description="Retrieve all active strategy goals for a user with current metrics and progress"
+)
+async def get_user_goals(user_id: str) -> StandardResponse:
+    """
+    Fetch all active goals for a user.
+    Returns goals with current values, targets, and progress percentages.
+    """
+    from Database.database import get_db
+    from goal_setting_service import GoalSettingService
+    
+    db = next(get_db())
+    service = GoalSettingService(db)
+    
+    try:
+        goals = service.get_user_goals(user_id)
+        can_refresh = service.can_refresh_goals(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(goals)} goals",
+            user_id=user_id,
+            data={
+                "goals": goals,
+                "can_refresh": can_refresh
+            }
+        )
+    except Exception as e:
+        logger.error(f"[Goals] Error fetching goals: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching goals: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.post(
+    "/strategy/goals/initialize",
+    response_model=StandardResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Strategy Goals"],
+    summary="Initialize Goals",
+    description="Initialize strategy goals after onboarding completion"
+)
+async def initialize_goals(user_id: str) -> StandardResponse:
+    """
+    Initialize goals based on user's selected SEO goals from onboarding.
+    Creates a new 90-day goal cycle.
+    """
+    from Database.database import get_db
+    from goal_setting_service import GoalSettingService
+    
+    db = next(get_db())
+    service = GoalSettingService(db)
+    
+    try:
+        result = service.initialize_goals(user_id)
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.get("message", "Failed to initialize goals")
+            )
+        
+        return StandardResponse(
+            status="success",
+            message=result.get("message", "Goals initialized successfully"),
+            user_id=user_id,
+            data=result
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[Goals] Error initializing goals: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error initializing goals: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.post(
+    "/strategy/goals/refresh",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Strategy Goals"],
+    summary="Refresh Goals",
+    description="Manually refresh goals and create a new 90-day cycle"
+)
+async def refresh_goals(user_id: str) -> StandardResponse:
+    """
+    Manually refresh goals (allowed after 90-day cycle ends).
+    Archives current goals and creates new cycle with updated baseline values.
+    """
+    from Database.database import get_db
+    from goal_setting_service import GoalSettingService
+    
+    db = next(get_db())
+    service = GoalSettingService(db)
+    
+    try:
+        result = service.refresh_goals(user_id)
+        
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=result.get("message", "Cannot refresh goals yet")
+            )
+        
+        return StandardResponse(
+            status="success",
+            message="Goals refreshed successfully",
+            user_id=user_id,
+            data=result
+        )
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"[Goals] Error refreshing goals: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error refreshing goals: {str(e)}"
+        )
+    finally:
+        db.close()
 

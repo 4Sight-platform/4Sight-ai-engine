@@ -339,3 +339,25 @@ class AsIsRefreshResponse(BaseModel):
     message: str
     user_id: str
     data: Dict[str, Any]
+
+
+# ==================== ACTION PLAN Models ====================
+
+class ActionPlanGenerateRequest(BaseModel):
+    """Request to generate action plan"""
+    user_id: str = Field(..., description="User ID")
+
+
+class ActionPlanTasksRequest(BaseModel):
+    """Request to get action plan tasks with filters"""
+    user_id: str = Field(..., description="User ID")
+    category: Optional[str] = Field(default=None, description="Filter by category: 'onpage', 'offpage', 'technical'")
+    priority: Optional[str] = Field(default=None, description="Filter by priority: 'high', 'medium', 'low'")
+    status: Optional[str] = Field(default=None, description="Filter by status: 'not_started', 'in_progress', 'completed'")
+
+
+class ActionPlanUpdateStatusRequest(BaseModel):
+    """Request to update task status"""
+    user_id: str = Field(..., description="User ID")
+    new_status: str = Field(..., description="New status: 'not_started', 'in_progress', or 'completed'")
+    notes: Optional[str] = Field(default=None, max_length=500, description="Optional notes for status change")
