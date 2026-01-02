@@ -219,3 +219,145 @@ class KeywordSelectionRequest(BaseModel):
     # Must select 10-15 keywords
     selected_keyword_ids: List[int] = Field(..., min_length=10, max_length=15, description="List of 10-15 selected keyword IDs")
     lock_until: Optional[str] = Field(None, description="Optional lock expiry date")
+
+
+# ==================== AS-IS State Models ====================
+
+class AsIsSummaryRequest(BaseModel):
+    """Request for AS-IS summary data"""
+    user_id: str = Field(..., description="User ID")
+    site_url: str = Field(..., description="User's website URL")
+    tracked_keywords: Optional[List[str]] = Field(default=None, description="Tracked keywords")
+    competitors: Optional[List[str]] = Field(default=None, description="Competitor domains")
+
+
+class AsIsParametersRequest(BaseModel):
+    """Request for AS-IS parameters"""
+    user_id: str = Field(..., description="User ID")
+    site_url: str = Field(..., description="User's website URL")
+    tab: str = Field(default="onpage", description="Tab: onpage, offpage, or technical")
+    status_filter: Optional[str] = Field(default=None, description="Filter: optimal or needs_attention")
+    priority_urls: Optional[List[str]] = Field(default=None, description="Priority URLs to crawl")
+
+
+class AsIsRefreshRequest(BaseModel):
+    """Request to refresh AS-IS data"""
+    user_id: str = Field(..., description="User ID")
+    site_url: str = Field(..., description="User's website URL")
+    priority_urls: Optional[List[str]] = Field(default=None, description="Priority URLs")
+    tracked_keywords: Optional[List[str]] = Field(default=None, description="Tracked keywords")
+    competitors: Optional[List[str]] = Field(default=None, description="Competitors")
+
+
+class AsIsCompetitorsRequest(BaseModel):
+    """Request for AS-IS competitor data"""
+    user_id: str = Field(..., description="User ID")
+    site_url: str = Field(..., description="User's website URL")
+    competitors: List[str] = Field(..., description="Competitor domains")
+
+
+class TrafficCardData(BaseModel):
+    """Organic traffic card data"""
+    total_clicks: int = 0
+    clicks_change: float = 0
+    clicks_change_direction: str = "neutral"
+    total_impressions: int = 0
+    impressions_change: float = 0
+    impressions_change_direction: str = "neutral"
+    avg_ctr: float = 0
+    data_available: bool = False
+
+
+class KeywordsCardData(BaseModel):
+    """Keywords performance card data"""
+    avg_position: float = 0
+    position_change: float = 0
+    position_change_direction: str = "neutral"
+    top10_keywords: int = 0
+    top10_change: int = 0
+    total_keywords: int = 0
+    tracked_keywords_count: int = 0
+    ranked_keywords: List[Dict[str, Any]] = []
+    data_available: bool = False
+
+
+class SERPCardData(BaseModel):
+    """SERP features card data"""
+    features_count: int = 0
+    features_present: List[str] = []
+    domain_in_features: int = 0
+    data_available: bool = False
+    message: Optional[str] = None
+
+
+class CompetitorRankCardData(BaseModel):
+    """Competitor rank card data"""
+    your_rank: Optional[int] = None
+    total_competitors: int = 0
+    your_visibility_score: float = 0
+    empty_state: bool = False
+    message: Optional[str] = None
+
+
+class AsIsSummaryResponse(BaseModel):
+    """Response for AS-IS summary"""
+    status: str
+    message: str
+    user_id: str
+    data: Dict[str, Any]
+
+
+class ParameterItem(BaseModel):
+    """Single parameter item"""
+    group_id: str
+    name: str
+    score: float
+    status: str
+    tab: str
+    details: Optional[Dict[str, Any]] = None
+
+
+class AsIsParametersResponse(BaseModel):
+    """Response for AS-IS parameters"""
+    status: str
+    message: str
+    user_id: str
+    data: Dict[str, Any]
+
+
+class AsIsCompetitorsResponse(BaseModel):
+    """Response for AS-IS competitors"""
+    status: str
+    message: str
+    user_id: str
+    data: Dict[str, Any]
+
+
+class AsIsRefreshResponse(BaseModel):
+    """Response for AS-IS refresh"""
+    status: str
+    message: str
+    user_id: str
+    data: Dict[str, Any]
+
+
+# ==================== ACTION PLAN Models ====================
+
+class ActionPlanGenerateRequest(BaseModel):
+    """Request to generate action plan"""
+    user_id: str = Field(..., description="User ID")
+
+
+class ActionPlanTasksRequest(BaseModel):
+    """Request to get action plan tasks with filters"""
+    user_id: str = Field(..., description="User ID")
+    category: Optional[str] = Field(default=None, description="Filter by category: 'onpage', 'offpage', 'technical'")
+    priority: Optional[str] = Field(default=None, description="Filter by priority: 'high', 'medium', 'low'")
+    status: Optional[str] = Field(default=None, description="Filter by status: 'not_started', 'in_progress', 'completed'")
+
+
+class ActionPlanUpdateStatusRequest(BaseModel):
+    """Request to update task status"""
+    user_id: str = Field(..., description="User ID")
+    new_status: str = Field(..., description="New status: 'not_started', 'in_progress', or 'completed'")
+    notes: Optional[str] = Field(default=None, max_length=500, description="Optional notes for status change")
