@@ -94,6 +94,12 @@ class GovernanceAsIsService(AsIsStateService):
                 }
             }
         
+        # Ensure scores are not None before rounding
+        if current_score is None:
+            current_score = 0.0
+        if baseline_score is None:
+            baseline_score = 0.0
+            
         return {
             "overall_score": round(current_score, 1),
             "baseline_score": round(baseline_score, 1),

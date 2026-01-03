@@ -1,3 +1,4 @@
+#asis service
 """
 AS-IS State Service
 Main orchestration service for the AS-IS State feature
@@ -38,8 +39,17 @@ class AsIsStateService:
     - Score calculation
     """
     
-    def __init__(self, serp_api_key: str = None, psi_api_key: str = None):
+    def __init__(
+        self, 
+        serp_api_key: str = None, 
+        psi_api_key: str = None,
+        google_cse_api_key: str = None,
+        google_cse_cx: str = None
+    ):
         self.serp_api_key = serp_api_key or os.getenv("SERP_API_KEY")
+        self.google_cse_api_key = google_cse_api_key or os.getenv("GOOGLE_CSE_API_KEY")
+        self.google_cse_cx = google_cse_cx or os.getenv("GOOGLE_CSE_CX")
+        
         self.psi_api_key = psi_api_key or os.getenv("PSI_API_KEY")
         self.signal_engine = SignalEngine()
         self.competitor_service = CompetitorScoringService()
@@ -67,7 +77,14 @@ class AsIsStateService:
         """
         # Initialize services
         gsc_service = GSCDataService(access_token)
-        serp_service = SERPService(self.serp_api_key) if self.serp_api_key else None
+        
+        # Initialize SERP Service with available providers
+        has_serp_config = self.serp_api_key or (self.google_cse_api_key and self.google_cse_cx)
+        serp_service = SERPService(
+            api_key=self.serp_api_key,
+            google_cse_key=self.google_cse_api_key,
+            google_cse_cx=self.google_cse_cx
+        ) if has_serp_config else None
         
         # Fetch GSC data
         try:
@@ -101,7 +118,69 @@ class AsIsStateService:
             "last_updated": datetime.now().isoformat()
         }
         
+        # Save to DB cache for Goal Setting service to use
+        try:
+            self._save_summary_to_cache(user_id, summary)
+        except Exception as e:
+            logger.error(f"[AS-IS] Error saving summary to cache: {e}")
+
         return summary
+    
+    def _save_summary_to_cache(self, user_id: str, summary: Dict[str, Any]):
+        """Save summary data to AsIsSummaryCache table"""
+        try:
+            db = next(get_db())
+            
+            # Check for existing cache
+            cache = db.query(AsIsSummaryCache).filter(
+                AsIsSummaryCache.user_id == user_id
+            ).first()
+            
+            if not cache:
+                cache = AsIsSummaryCache(user_id=user_id)
+                db.add(cache)
+                logger.info(f"[AS-IS] Creating new cache entry for user {user_id}")
+            else:
+                logger.info(f"[AS-IS] Updating existing cache for user {user_id}")
+            
+            # Update values
+            traffic = summary.get("organic_traffic", {})
+            keywords = summary.get("keywords_performance", {})
+            serp = summary.get("serp_features", {})
+            comp = summary.get("competitor_rank", {})
+            
+            # Extract values for logging (before close)
+            saved_clicks = traffic.get("total_clicks", 0)
+            saved_impressions = traffic.get("total_impressions", 0)
+            
+            # Log the values being saved
+            logger.info(f"[AS-IS] Saving to cache - total_clicks: {saved_clicks}, total_impressions: {saved_impressions}")
+            
+            cache.total_clicks = saved_clicks
+            cache.clicks_change = traffic.get("clicks_change", 0)
+            cache.total_impressions = saved_impressions
+            cache.impressions_change = traffic.get("impressions_change", 0)
+            
+            cache.avg_position = keywords.get("avg_position", 0)
+            cache.position_change = keywords.get("position_change", 0)
+            cache.top10_keywords = keywords.get("top10_keywords", 0)
+            cache.top10_change = keywords.get("top10_change", 0)
+            
+            cache.features_count = serp.get("features_count", 0)
+            # features_present is stored as JSON text
+            import json
+            cache.features_present = json.dumps(serp.get("features_present", []))
+            
+            cache.your_rank = comp.get("your_rank")
+            cache.total_competitors = comp.get("total_competitors", 0)
+            cache.your_visibility_score = comp.get("your_visibility_score", 0)
+            
+            db.commit()
+            db.close()
+            logger.info(f"[AS-IS] Successfully saved summary cache for user {user_id}: clicks={saved_clicks}, impressions={saved_impressions}")
+            
+        except Exception as e:
+            logger.error(f"[AS-IS] DB Error in save_summary_to_cache: {e}", exc_info=True)
     
     def _build_traffic_card(self, gsc_data: Dict = None) -> Dict[str, Any]:
         """Build Organic Traffic card data."""
@@ -832,3 +911,7 @@ class AsIsStateService:
             "duration_seconds": (refresh_end - refresh_start).total_seconds(),
             "refreshed_at": refresh_end.isoformat()
         }
+
+
+
+

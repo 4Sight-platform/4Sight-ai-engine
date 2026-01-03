@@ -1,11 +1,13 @@
+#Serp_services
 """
 SERP API Service
 Fetches SERP features and competitor visibility data
-Uses the provided SERP API key
+Uses the provided SERP API key (ValueSERP) or Google CSE credentials
 """
 
 import logging
 import httpx
+import os
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -18,10 +20,17 @@ class SERPService:
     - SERP feature detection (featured snippets, PAA, local pack, etc.)
     - Domain visibility in SERP
     - Competitor presence analysis
+    
+    Supports:
+    1. SerpApi (primary, rich features)
+    2. Google Custom Search JSON API (fallback/alternative, organic results only)
     """
     
-    # ValueSERP API base URL (commonly used SERP API)
-    API_BASE = "https://api.valueserp.com/search"
+    # SerpApi Base URL
+    SERPAPI_BASE = "https://serpapi.com/search"
+    
+    # Google CSE base URL
+    GOOGLE_CSE_BASE = "https://www.googleapis.com/customsearch/v1"
     
     # SERP features to track
     TRACKED_FEATURES = [
@@ -37,8 +46,18 @@ class SERPService:
         "site_links"
     ]
     
-    def __init__(self, api_key: str):
+    def __init__(
+        self, 
+        api_key: str = None, 
+        google_cse_key: str = None, 
+        google_cse_cx: str = None
+    ):
         self.api_key = api_key
+        self.google_cse_key = google_cse_key
+        self.google_cse_cx = google_cse_cx
+        
+        if not self.api_key and not (self.google_cse_key and self.google_cse_cx):
+            logger.warning("[SERP] No valid API keys provided (ValueSERP or Google CSE)")
     
     async def search(
         self,
@@ -59,64 +78,152 @@ class SERPService:
         Returns:
             Dict with SERP results and features
         """
+        # Priority 1: SerpApi (Rich Features)
+        if self.api_key:
+            return await self._search_serpapi(keyword, location, language, device)
+            
+        # Priority 2: Google CSE (Organic Results Only)
+        elif self.google_cse_key and self.google_cse_cx:
+            return await self._search_google_cse(keyword, location, language)
+            
+        else:
+            return {
+                "keyword": keyword, 
+                "error": "No API configuration available", 
+                "organic_results": [], 
+                "features": []
+            }
+            
+    async def _search_serpapi(
+        self,
+        keyword: str,
+        location: str,
+        language: str,
+        device: str
+    ) -> Dict[str, Any]:
+        """Search using SerpApi."""
         params = {
             "api_key": self.api_key,
             "q": keyword,
             "location": location,
             "hl": language,
             "device": device,
-            "num": 10  # Top 10 results
+            "num": 10,
+            "engine": "google"
         }
         
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(self.API_BASE, params=params, timeout=30.0)
+                response = await client.get(self.SERPAPI_BASE, params=params, timeout=30.0)
                 response.raise_for_status()
                 data = response.json()
+                logger.info(f"[SERP] SerpApi keys for '{keyword}': {list(data.keys())}")
+                if "organic_results" in data:
+                    logger.info(f"[SERP] Found {len(data['organic_results'])} organic results")
+                else:
+                    logger.warn("[SERP] No 'organic_results' key in SerpApi response")
+                
+                # SerpApi & ValueSERP share very similar JSON structure for these keys
+                # So we can reuse _extract_features largely as is.
                 
                 return {
                     "keyword": keyword,
                     "organic_results": data.get("organic_results", []),
                     "features": self._extract_features(data),
-                    "search_metadata": data.get("search_metadata", {})
+                    "search_metadata": data.get("search_metadata", {}),
+                    "source": "serpapi"
                 }
                 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"[SERP] HTTP error for '{keyword}': {e.response.status_code}")
-            return {"keyword": keyword, "error": str(e), "organic_results": [], "features": []}
         except Exception as e:
-            logger.error(f"[SERP] Error searching '{keyword}': {e}")
+            logger.error(f"[SERP] SerpApi error for '{keyword}': {e}")
+            # Failover to CSE if configured
+            if self.google_cse_key and self.google_cse_cx:
+                logger.info(f"[SERP] Failing over to Google CSE for '{keyword}'")
+                return await self._search_google_cse(keyword, location, language)
+                
+            return {"keyword": keyword, "error": str(e), "organic_results": [], "features": []}
+
+    async def _search_google_cse(
+        self,
+        keyword: str,
+        location: str,
+        language: str
+    ) -> Dict[str, Any]:
+        """Search using Google Custom Search JSON API."""
+        # Note: CSE doesn't support 'device' param purely, it adapts.
+        # Location is handled via gl (country) or near (if enabled, but gl is safer)
+        # Using 'gl' parameter for country (e.g., 'us', 'in'). derived from location string is hard, defaulting to 'us' or user-config if available.
+        
+        params = {
+            "key": self.google_cse_key,
+            "cx": self.google_cse_cx,
+            "q": keyword,
+            "hl": language,
+            "num": 10
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(self.GOOGLE_CSE_BASE, params=params, timeout=30.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                items = data.get("items", [])
+                organic_results = []
+                
+                for i, item in enumerate(items):
+                    organic_results.append({
+                        "title": item.get("title"),
+                        "link": item.get("link"),
+                        "snippet": item.get("snippet"),
+                        "position": i + 1,
+                        "displayed_link": item.get("displayLink")
+                    })
+                
+                # Google CSE doesn't provide structured features like PAA
+                return {
+                    "keyword": keyword,
+                    "organic_results": organic_results,
+                    "features": [], # CSE Limitation
+                    "search_metadata": data.get("searchInformation", {}),
+                    "source": "google_cse"
+                }
+                
+        except Exception as e:
+            logger.error(f"[SERP] Google CSE error for '{keyword}': {e}")
             return {"keyword": keyword, "error": str(e), "organic_results": [], "features": []}
     
     def _extract_features(self, data: Dict) -> List[Dict[str, Any]]:
         """Extract detected SERP features from response."""
         features = []
         
-        # Featured Snippet
-        if data.get("answer_box") or data.get("featured_snippet"):
+        # Featured Snippet (SerpApi uses 'answer_box' or sometimes just 'organic_results' with snippet)
+        if data.get("answer_box"):
             features.append({
                 "type": "featured_snippet",
                 "present": True,
-                "data": data.get("answer_box") or data.get("featured_snippet")
+                "data": data.get("answer_box")
             })
         
-        # People Also Ask
-        if data.get("related_questions") or data.get("people_also_ask"):
+        # People Also Ask (SerpApi uses 'related_questions')
+        if data.get("related_questions"):
             features.append({
                 "type": "people_also_ask",
                 "present": True,
-                "count": len(data.get("related_questions", []) or data.get("people_also_ask", []))
+                "count": len(data.get("related_questions", [])),
+                "data": data.get("related_questions")
             })
         
-        # Local Pack
-        if data.get("local_results") or data.get("local_pack"):
+        # Local Pack (SerpApi uses 'local_results')
+        if data.get("local_results"):
             features.append({
                 "type": "local_pack",
                 "present": True,
-                "count": len(data.get("local_results", []) or data.get("local_pack", []))
+                "count": len(data.get("local_results", [])),
+                "data": data.get("local_results")
             })
         
-        # Knowledge Graph
+        # Knowledge Graph (SerpApi uses 'knowledge_graph')
         if data.get("knowledge_graph"):
             features.append({
                 "type": "knowledge_graph",
@@ -124,38 +231,42 @@ class SERPService:
                 "data": data.get("knowledge_graph")
             })
         
-        # Image Pack
-        if data.get("inline_images") or data.get("image_results"):
+        # Image Pack (SerpApi uses 'inline_images')
+        if data.get("inline_images"):
             features.append({
                 "type": "image_pack",
                 "present": True,
-                "count": len(data.get("inline_images", []) or data.get("image_results", []))
+                "count": len(data.get("inline_images", [])),
+                "data": data.get("inline_images")
             })
         
-        # Video Results
-        if data.get("inline_videos") or data.get("video_results"):
+        # Video Results (SerpApi uses 'inline_videos')
+        if data.get("inline_videos"):
             features.append({
                 "type": "video_results",
                 "present": True,
-                "count": len(data.get("inline_videos", []) or data.get("video_results", []))
+                "count": len(data.get("inline_videos", [])),
+                "data": data.get("inline_videos")
             })
         
-        # Shopping Results
-        if data.get("shopping_results") or data.get("inline_shopping"):
+        # Shopping Results (SerpApi uses 'shopping_results')
+        if data.get("shopping_results"):
             features.append({
                 "type": "shopping_results",
                 "present": True,
-                "count": len(data.get("shopping_results", []) or data.get("inline_shopping", []))
+                "count": len(data.get("shopping_results", [])),
+                "data": data.get("shopping_results")
             })
         
-        # Related Searches
+        # Related Searches (SerpApi uses 'related_searches')
         if data.get("related_searches"):
             features.append({
                 "type": "related_searches",
                 "present": True,
-                "count": len(data.get("related_searches", []))
+                "count": len(data.get("related_searches", [])),
+                "data": data.get("related_searches")
             })
-        
+            
         return features
     
     async def analyze_keyword(
@@ -180,7 +291,7 @@ class SERPService:
         if "error" in serp_data:
             return {
                 "keyword": keyword,
-                "error": serp_data["error"],
+                "error": serp_data.get("error"),
                 "target_in_top10": False,
                 "target_position": None,
                 "features": [],
