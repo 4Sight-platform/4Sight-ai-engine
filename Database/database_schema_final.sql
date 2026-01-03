@@ -785,13 +785,54 @@ CREATE TABLE action_plan_task_history (
 
 CREATE INDEX idx_task_history_task ON action_plan_task_history(task_id);
 
+-- 35. action_plan_progress_snapshots - Historical tracking for governance
+CREATE TABLE action_plan_progress_snapshots (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Snapshot Date
+    snapshot_date DATE NOT NULL,
+    cycle_start_date DATE NOT NULL,  -- Links to 90-day cycle
+    
+    -- Overall Metrics
+    total_tasks INTEGER DEFAULT 0,
+    completed_tasks INTEGER DEFAULT 0,
+    in_progress_tasks INTEGER DEFAULT 0,
+    completion_percentage FLOAT DEFAULT 0.0,
+    
+    -- Category Breakdown
+    onpage_total INTEGER DEFAULT 0,
+    onpage_completed INTEGER DEFAULT 0,
+    onpage_percentage FLOAT DEFAULT 0.0,
+    
+    offpage_total INTEGER DEFAULT 0,
+    offpage_completed INTEGER DEFAULT 0,
+    offpage_percentage FLOAT DEFAULT 0.0,
+    
+    technical_total INTEGER DEFAULT 0,
+    technical_completed INTEGER DEFAULT 0,
+    technical_percentage FLOAT DEFAULT 0.0,
+    
+    -- Baseline Flag
+    is_baseline BOOLEAN DEFAULT FALSE,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT uix_user_snapshot_date UNIQUE (user_id, snapshot_date)
+);
+
+CREATE INDEX idx_action_plan_progress_user ON action_plan_progress_snapshots(user_id);
+CREATE INDEX idx_action_plan_progress_cycle ON action_plan_progress_snapshots(user_id, cycle_start_date);
+CREATE INDEX idx_action_plan_progress_baseline ON action_plan_progress_snapshots(user_id, is_baseline) WHERE is_baseline = TRUE;
+
 
 -- ============================================
 -- SUMMARY
 -- ============================================
 
 /*
-COMPLETE SCHEMA SUMMARY - 34 TABLES TOTAL
+COMPLETE SCHEMA SUMMARY - 35 TABLES TOTAL
+
 
 CORE AUTH & USERS (4 tables)
 1. users (email-based UUID)

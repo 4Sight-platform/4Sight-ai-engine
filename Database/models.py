@@ -643,3 +643,44 @@ class ActionPlanTaskHistory(Base):
         CheckConstraint("new_status IN ('not_started', 'in_progress', 'completed')", name='chk_new_status'),
     )
 
+
+class ActionPlanProgressSnapshot(Base):
+    """Historical tracking for action plan governance"""
+    __tablename__ = "action_plan_progress_snapshots"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    
+    # Snapshot Date
+    snapshot_date = Column(Date, nullable=False)
+    cycle_start_date = Column(Date, nullable=False)  # Links to 90-day cycle
+    
+    # Overall Metrics
+    total_tasks = Column(Integer, default=0)
+    completed_tasks = Column(Integer, default=0)
+    in_progress_tasks = Column(Integer, default=0)
+    completion_percentage = Column(Float, default=0.0)
+    
+    # Category Breakdown - On-Page
+    onpage_total = Column(Integer, default=0)
+    onpage_completed = Column(Integer, default=0)
+    onpage_percentage = Column(Float, default=0.0)
+    
+    # Category Breakdown - Off-Page
+    offpage_total = Column(Integer, default=0)
+    offpage_completed = Column(Integer, default=0)
+    offpage_percentage = Column(Float, default=0.0)
+    
+    # Category Breakdown - Technical
+    technical_total = Column(Integer, default=0)
+    technical_completed = Column(Integer, default=0)
+    technical_percentage = Column(Float, default=0.0)
+    
+    # Baseline Flag
+    is_baseline = Column(Boolean, default=False)
+    
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('user_id', 'snapshot_date', name='uix_user_snapshot_date'),
+    )

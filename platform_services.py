@@ -2048,3 +2048,353 @@ async def refresh_governance_data(user_id: str):
     except Exception as e:
         logger.error(f"Error refreshing governance data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Governance Action Plan Endpoints ====================
+
+@api_router.get(
+    "/governance/action-plan/performance/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Action Plan Performance",
+    description="Get overall action plan completion metrics and delta from baseline"
+)
+async def get_action_plan_performance(user_id: str) -> StandardResponse:
+    """
+    Get action plan governance metrics including:
+    - Overall completion percentage
+    - Completed/total task counts
+    - Delta from baseline
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        performance = service.get_performance(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Action plan performance retrieved",
+            user_id=user_id,
+            data=performance
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting action plan performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting action plan performance: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/categories/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Action Plan Categories",
+    description="Get action plan progress breakdown by category (onpage, offpage, technical)"
+)
+async def get_action_plan_categories(user_id: str) -> StandardResponse:
+    """
+    Get action plan progress by category with completion % for each
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        categories = service.get_categories(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Action plan categories retrieved",
+            user_id=user_id,
+            data=categories
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting action plan categories: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting action plan categories: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/timeline/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Action Plan Timeline",
+    description="Get historical progress snapshots for action plan"
+)
+async def get_action_plan_timeline(user_id: str, limit: int = 10) -> StandardResponse:
+    """
+    Get action plan progress timeline showing historical snapshots
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        timeline = service.get_timeline(user_id, limit)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(timeline)} timeline entries",
+            user_id=user_id,
+            data={"timeline": timeline, "count": len(timeline)}
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting action plan timeline: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting action plan timeline: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.post(
+    "/governance/action-plan/baseline/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Governance - Action Plan"],
+    summary="Capture Action Plan Baseline",
+    description="Capture baseline snapshot at start of 90-day cycle"
+)
+async def capture_action_plan_baseline(user_id: str) -> StandardResponse:
+    """
+    Capture action plan baseline for a new 90-day cycle
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        result = service.capture_baseline(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Baseline captured successfully",
+            user_id=user_id,
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error capturing action plan baseline: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error capturing action plan baseline: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.post(
+    "/governance/action-plan/snapshot/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Governance - Action Plan"],
+    summary="Capture Daily Snapshot",
+    description="Capture daily progress snapshot for timeline tracking"
+)
+async def capture_action_plan_snapshot(user_id: str) -> StandardResponse:
+    """
+    Capture daily action plan snapshot for trending
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        result = service.capture_daily_snapshot(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message=result.get("message", "Snapshot captured"),
+            user_id=user_id,
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error capturing snapshot: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error capturing snapshot: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/parameter-groups/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Parameter Groups Breakdown",
+    description="Get action plan progress by parameter_group (SERP Snippet, Accessibility, etc.)"
+)
+async def get_action_plan_parameter_groups(user_id: str) -> StandardResponse:
+    """
+    Get action plan breakdown by parameter groups with completion % for each
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        parameter_groups = service.get_parameter_groups(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(parameter_groups)} parameter groups",
+            user_id=user_id,
+            data={"parameter_groups": parameter_groups, "count": len(parameter_groups)}
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting parameter groups: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting parameter groups: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/recent-activity/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Recent Task Activity",
+    description="Get recent task updates from action plan history"
+)
+async def get_action_plan_recent_activity(user_id: str, limit: int = 10) -> StandardResponse:
+    """
+    Get recent task activity with status changes, priority, and completion dates
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        activity = service.get_recent_activity(user_id, limit)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(activity)} activity records",
+            user_id=user_id,
+            data={"recent_activity": activity, "count": len(activity)}
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting recent activity: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting recent activity: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/detailed-overview/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Detailed Action Plan Overview",
+    description="Get comprehensive overview with metrics, parameter groups, and activity"
+)
+async def get_action_plan_detailed_overview(user_id: str) -> StandardResponse:
+    """
+    Get complete action plan governance data including:
+    - Overview metrics (total, completed, in progress, pending)
+    - Parameter group breakdown
+    - Recent activity feed
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        overview_data = service.get_detailed_overview(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Detailed overview retrieved",
+            user_id=user_id,
+            data=overview_data
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting detailed overview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting detailed overview: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/action-plan/category/{user_id}/{category}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Action Plan"],
+    summary="Get Category-Specific Action Plan Overview",
+    description="Get action plan data filtered by category (onpage, offpage, technical)"
+)
+async def get_action_plan_category_overview(user_id: str, category: str) -> StandardResponse:
+    """
+    Get category-filtered action plan governance data including:
+    - Category-specific metrics (total, completed, in progress, pending)
+    - Parameter groups for this category
+    - Recent activity for this category
+    """
+    from Database.database import get_db
+    from action_plan_governance_service import ActionPlanGovernanceService
+    
+    if category not in ['onpage', 'offpage', 'technical']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category must be 'onpage', 'offpage', or 'technical'"
+        )
+    
+    db = next(get_db())
+    service = ActionPlanGovernanceService(db)
+    
+    try:
+        category_data = service.get_category_overview(user_id, category)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Category overview for {category} retrieved",
+            user_id=user_id,
+            data=category_data
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting category overview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting category overview: {str(e)}"
+        )
+    finally:
+        db.close()
