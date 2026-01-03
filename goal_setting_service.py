@@ -140,13 +140,23 @@ class GoalSettingService:
             current_metrics = self._get_current_metrics(user_id)
             
             # Create goals based on selected onboarding goals
+            # Deduplicate: multiple onboarding goal names may map to same goal type
             created_goals = []
+            processed_goal_types = set()
+            
             for goal_name in seo_goals_record.goals:
                 goal_type = GOAL_NAME_MAPPING.get(goal_name)
                 
                 if not goal_type or goal_type not in HARDCODED_TARGETS:
                     logger.warning(f"Unknown goal name: {goal_name}")
                     continue
+                
+                # Skip if already processed (e.g., search_visibility and local_visibility both map to serp-features)
+                if goal_type in processed_goal_types:
+                    logger.info(f"Skipping duplicate goal type: {goal_type} (from {goal_name})")
+                    continue
+                
+                processed_goal_types.add(goal_type)
                 
                 target_config = HARDCODED_TARGETS[goal_type]
                 
@@ -174,6 +184,41 @@ class GoalSettingService:
                 self.db.add(goal)
                 created_goals.append(goal_type)
             
+            # 2. ALWAYS Create "Additional" goals (Impressions, Domain Authority, Avg Position)
+            # These are standard supporting metrics that should appear for all users
+            for goal_type, config in HARDCODED_TARGETS.items():
+                # Skip if already created (e.g. if it was a priority goal)
+                if goal_type in processed_goal_types:
+                    continue
+                
+                # Only add if category is 'additional'
+                if config["category"] != "additional":
+                    continue
+                    
+                # Get baseline value
+                baseline_value = current_metrics.get(goal_type, "0")
+                
+                goal = StrategyGoal(
+                    user_id=user_id,
+                    goal_type=goal_type,
+                    goal_category=config["category"],
+                    cycle_start_date=cycle_start,
+                    cycle_end_date=cycle_end,
+                    is_locked=True,
+                    baseline_value=baseline_value,
+                    current_value=baseline_value,
+                    target_value=config["value"],
+                    unit=config["unit"],
+                    target_type=config["type"],
+                    slab_data=config.get("slabs"),
+                    progress_percentage=0.0,
+                    last_calculated_at=datetime.utcnow()
+                )
+                
+                self.db.add(goal)
+                created_goals.append(goal_type)
+                processed_goal_types.add(goal_type)
+            
             self.db.commit()
             
             logger.info(f"Created {len(created_goals)} goals for user {user_id}: {created_goals}")
@@ -191,12 +236,17 @@ class GoalSettingService:
             self.db.rollback()
             raise
     
-    def _get_current_metrics(self, user_id: str) -> Dict[str, str]:
+    def _get_current_metrics(self, user_id: str, asis_summary: Dict[str, Any] = None) -> Dict[str, str]:
         """
-        Get current metric values from AS-IS data
+        Get current metric values from AS-IS data.
+        
+        Priority order:
+        1. Live AS-IS summary data (passed from API endpoint)
+        2. Defaults to "0"/empty if live data is not available (NO CACHING as per user request)
         
         Args:
             user_id: User ID
+            asis_summary: Live AS-IS summary data (from AsIsStateService.get_summary())
             
         Returns:
             Dict mapping goal_type to current value
@@ -204,94 +254,43 @@ class GoalSettingService:
         metrics = {}
         
         try:
-            # Try to get from AS-IS summary cache first (faster)
-            summary_cache = self.db.query(AsIsSummaryCache).filter(
-                AsIsSummaryCache.user_id == user_id
-            ).first()
-            
-            if summary_cache:
-                # Organic Traffic (from clicks)
-                metrics["organic-traffic"] = str(summary_cache.total_clicks) if summary_cache.total_clicks else "0"
+            if asis_summary:
+                # Priority 1: Parse live AS-IS summary data (real-time!)
+                logger.info(f"[Goal Setting] Using LIVE AS-IS data for user {user_id}")
                 
-                # Average Position
-                metrics["avg-position"] = f"#{summary_cache.avg_position:.1f}" if summary_cache.avg_position else "#0"
+                traffic = asis_summary.get("organic_traffic", {})
+                keywords = asis_summary.get("keywords_performance", {})
+                serp = asis_summary.get("serp_features", {})
                 
-                # Impressions
-                metrics["impressions"] = str(summary_cache.total_impressions) if summary_cache.total_impressions else "0"
+                # Organic Traffic (from clicks) - EXACT value from As-Is State
+                metrics["organic-traffic"] = str(traffic.get("total_clicks", 0))
                 
-                # Keyword Rankings (top 10 keywords count)
-                metrics["keyword-rankings"] = str(summary_cache.top10_keywords) if summary_cache.top10_keywords else "0"
+                # Average Position - EXACT value from As-Is State
+                avg_pos = keywords.get("avg_position", 0)
+                metrics["avg-position"] = f"#{avg_pos:.1f}" if avg_pos else "#0"
                 
-                # SERP Features
-                metrics["serp-features"] = str(summary_cache.features_count) if summary_cache.features_count else "0"
+                # Impressions - EXACT value from As-Is State
+                metrics["impressions"] = str(traffic.get("total_impressions", 0))
+                
+                # Keyword Rankings (top 10 keywords count) - EXACT value from As-Is State
+                metrics["keyword-rankings"] = str(keywords.get("top10_keywords", 0))
+                
+                # SERP Features - EXACT value from As-Is State
+                metrics["serp-features"] = str(serp.get("features_count", 0))
                 
                 # Domain Authority - placeholder for now
                 metrics["domain-authority"] = "0"
                 
+                logger.info(f"[Goal Setting] LIVE metrics for user {user_id}: {metrics}")
+                
             else:
-                # Fallback: Calculate from raw GSC data
-                logger.info(f"No summary cache, calculating metrics from GSC data for user {user_id}")
-                
-                # Get last 30 days of GSC data
-                thirty_days_ago = date.today() - timedelta(days=30)
-                
-                # Total clicks (organic traffic)
-                clicks_result = self.db.query(
-                    func.sum(GSCDailyMetrics.clicks)
-                ).filter(
-                    GSCDailyMetrics.user_id == user_id,
-                    GSCDailyMetrics.snapshot_date >= thirty_days_ago,
-                    GSCDailyMetrics.period_type == 'current'
-                ).scalar()
-                
-                metrics["organic-traffic"] = str(clicks_result or 0)
-                
-                # Total impressions
-                impressions_result = self.db.query(
-                    func.sum(GSCDailyMetrics.impressions)
-                ).filter(
-                    GSCDailyMetrics.user_id == user_id,
-                    GSCDailyMetrics.snapshot_date >= thirty_days_ago,
-                    GSCDailyMetrics.period_type == 'current'
-                ).scalar()
-                
-                metrics["impressions"] = str(impressions_result or 0)
-                
-                # Average position
-                avg_position = self.db.query(
-                    func.avg(GSCDailyMetrics.position)
-                ).filter(
-                    GSCDailyMetrics.user_id == user_id,
-                    GSCDailyMetrics.snapshot_date >= thirty_days_ago,
-                    GSCDailyMetrics.period_type == 'current',
-                    GSCDailyMetrics.metric_type == 'query'
-                ).scalar()
-                
-                metrics["avg-position"] = f"#{avg_position:.1f}" if avg_position else "#0"
-                
-                # Top 10 keywords count
-                top10_count = self.db.query(
-                    func.count(func.distinct(KeywordPositionSnapshot.keyword))
-                ).filter(
-                    KeywordPositionSnapshot.user_id == user_id,
-                    KeywordPositionSnapshot.in_top10 == True,
-                    KeywordPositionSnapshot.snapshot_date >= thirty_days_ago
-                ).scalar()
-                
-                metrics["keyword-rankings"] = str(top10_count or 0)
-                
-                # SERP features count
-                features_count = self.db.query(
-                    func.count(func.distinct(SERPFeaturePresence.feature_type))
-                ).filter(
-                    SERPFeaturePresence.user_id == user_id,
-                    SERPFeaturePresence.domain_present == True,
-                    SERPFeaturePresence.snapshot_date >= thirty_days_ago
-                ).scalar()
-                
-                metrics["serp-features"] = str(features_count or 0)
-                
-                # Domain Authority - placeholder
+                # NO CACHING FALLBACK (User Request)
+                logger.warning(f"[Goal Setting] No live AS-IS data provided for user {user_id}. Returning empty metrics.")
+                metrics["organic-traffic"] = "0"
+                metrics["impressions"] = "0"
+                metrics["avg-position"] = "#0"
+                metrics["keyword-rankings"] = "0"
+                metrics["serp-features"] = "0"
                 metrics["domain-authority"] = "0"
             
             logger.info(f"Current metrics for user {user_id}: {metrics}")
@@ -309,15 +308,16 @@ class GoalSettingService:
                 "domain-authority": "0"
             }
     
-    def get_user_goals(self, user_id: str) -> List[Dict[str, Any]]:
+    def get_user_goals(self, user_id: str, asis_summary: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
-        Get all active goals for a user
+        Get all active goals for a user with LIVE current values from AS-IS state.
         
         Args:
             user_id: User ID
+            asis_summary: Live AS-IS summary data (from AsIsStateService.get_summary())
             
         Returns:
-            List of goal dictionaries
+            List of goal dictionaries with live current_value from AS-IS state
         """
         try:
             goals = self.db.query(StrategyGoal).filter(
@@ -328,10 +328,38 @@ class GoalSettingService:
                 StrategyGoal.created_at.asc()
             ).all()
             
-            return [self._goal_to_dict(goal) for goal in goals]
+            if not goals:
+                return []
+            
+            # Fetch current metrics from LIVE AS-IS data (not cache!)
+            current_metrics = self._get_current_metrics(user_id, asis_summary)
+            logger.info(f"Fetched live AS-IS metrics for user {user_id}: {current_metrics}")
+            
+            # Update current values in goals and convert to dict
+            goal_dicts = []
+            for goal in goals:
+                # Get live value from AS-IS State
+                live_value = current_metrics.get(goal.goal_type, goal.current_value)
+                
+                # Update the goal object in DB with latest value
+                if live_value != goal.current_value:
+                    goal.current_value = live_value
+                    goal.last_calculated_at = datetime.utcnow()
+                    logger.info(f"Updated {goal.goal_type} current_value: {goal.current_value} -> {live_value}")
+                
+                # Convert to dict with live current_value
+                goal_dict = self._goal_to_dict(goal)
+                goal_dict["current_value"] = live_value
+                goal_dicts.append(goal_dict)
+            
+            # Commit the updates to current_value
+            self.db.commit()
+            
+            return goal_dicts
             
         except Exception as e:
             logger.error(f"Error getting goals for user {user_id}: {str(e)}")
+            self.db.rollback()
             return []
     
     def can_refresh_goals(self, user_id: str) -> bool:

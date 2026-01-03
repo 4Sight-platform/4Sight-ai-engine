@@ -1324,7 +1324,11 @@ from base_requests import (
 from asis.asis_service import AsIsStateService
 
 # Initialize AS-IS service with SERP API key
-asis_service = AsIsStateService(serp_api_key=os.getenv("SERP_API_KEY"))
+asis_service = AsIsStateService(
+    serp_api_key=os.getenv("SERP_API_KEY"),
+    google_cse_api_key=os.getenv("GOOGLE_CSE_API_KEY"),
+    google_cse_cx=os.getenv("GOOGLE_CSE_CX")
+)
 
 
 @api_router.post(
@@ -1788,12 +1792,12 @@ async def update_task_status(
     status_code=status.HTTP_200_OK,
     tags=["Strategy Goals"],
     summary="Get User Goals",
-    description="Retrieve all active strategy goals for a user with current metrics and progress"
+    description="Retrieve all active strategy goals for a user with LIVE current metrics from AS-IS State"
 )
 async def get_user_goals(user_id: str) -> StandardResponse:
     """
     Fetch all active goals for a user.
-    Returns goals with current values, targets, and progress percentages.
+    Returns goals with LIVE current values from AS-IS State (not cached data).
     """
     from Database.database import get_db
     from goal_setting_service import GoalSettingService
@@ -1802,7 +1806,57 @@ async def get_user_goals(user_id: str) -> StandardResponse:
     service = GoalSettingService(db)
     
     try:
-        goals = service.get_user_goals(user_id)
+        # Step 1: Fetch user profile to get site_url and tracked_keywords
+        pm = get_profile_manager()
+        profile = pm.get_profile(user_id) if pm.profile_exists(user_id) else {}
+
+        site_url = profile.get("website_url") or profile.get("gsc_verified_site")
+        tracked_keywords = profile.get("selected_keywords", [])
+        competitors = [c.get("domain") for c in profile.get("final_competitors", []) if c.get("domain")]
+
+        # Step 2: Fetch LIVE AS-IS summary data (real-time from GSC - same as As-Is State page)
+        asis_summary = None
+        if site_url:
+            try:
+                # Get fresh OAuth access token
+                access_token_result = await oauth_manager.get_fresh_access_token(user_id)
+                access_token = access_token_result.get("access_token")
+
+                if access_token:
+                    # Get tracked keywords from Keyword Universe (Source of Truth)
+                    try:
+                        kp_service = KeywordPlannerService()
+                        universe_data = kp_service.get_universe(user_id)
+                        kp_service.cleanup()
+
+                        if universe_data.get('status') == 'success':
+                            tracked_keywords = [
+                                item['keyword'] for item in universe_data.get('keywords', []) 
+                                if item.get('is_selected')
+                            ]
+                            logger.info(f"Fetched {len(tracked_keywords)} selected keywords from universe for goals")
+                        else:
+                            tracked_keywords = []
+                    except Exception as e:
+                        logger.warning(f"Could not fetch keyword universe for goals: {e}")
+                        tracked_keywords = []
+
+                    # Fetch AS-IS summary with proper inputs
+                    # site_url and competitors are already defined above, no need to re-fetch from profile here
+                    asis_summary = await asis_service.get_summary(
+                        user_id=user_id,
+                        access_token=access_token,
+                        site_url=site_url,
+                        tracked_keywords=tracked_keywords if tracked_keywords else None,
+                        competitors=competitors if competitors else None
+                    )
+                    logger.info(f"[Goals] Fetched LIVE AS-IS summary for user {user_id}")
+            except Exception as e:
+                logger.warning(f"[Goals] Could not fetch live AS-IS data for user {user_id}: {e}")
+                # Continue without live data - will fall back to GSC data in goal_setting_service
+
+        # Step 3: Get goals with LIVE AS-IS data (not cached!)
+        goals = service.get_user_goals(user_id, asis_summary=asis_summary)
         can_refresh = service.can_refresh_goals(user_id)
         
         return StandardResponse(
