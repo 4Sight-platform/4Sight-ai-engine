@@ -275,11 +275,152 @@ class GoalSettingService:
                 # Keyword Rankings (top 10 keywords count) - EXACT value from As-Is State
                 metrics["keyword-rankings"] = str(keywords.get("top10_keywords", 0))
                 
-                # SERP Features - EXACT value from As-Is State
-                metrics["serp-features"] = str(serp.get("features_count", 0))
+                # =====================================================
+                # SERP Features - FETCH DIRECTLY FROM SERPER.DEV API
+                # BRD Section 2.2: 6 feature types, OR condition across keywords
+                # =====================================================
+                import os
+                import httpx
+                from urllib.parse import urlparse
                 
-                # Domain Authority - placeholder for now
-                metrics["domain-authority"] = "0"
+                serper_api_key = os.getenv("SERPER_API_KEY")
+                site_url = asis_summary.get("site_url", "")
+                
+                # Extract domain from site_url
+                domain = ""
+                if site_url:
+                    parsed = urlparse(site_url)
+                    domain = parsed.netloc.replace("www.", "")
+                
+                serp_features_count = 0
+                serp_features_breakdown = []
+                
+                # Track which feature TYPES are active (OR condition per BRD)
+                active_features = {
+                    "featured_snippet": False,
+                    "knowledge_panel": False,
+                    "local_pack": False,
+                    "image_pack": False,
+                    "video_carousel": False,
+                    "people_also_ask": False
+                }
+                
+                if serper_api_key and domain:
+                    logger.info(f"[Goal Setting] Fetching SERP features from Serper.dev for {domain}")
+                    
+                    # Get tracked keywords
+                    tracked_keywords = []
+                    ranked_keywords = keywords.get("ranked_keywords", [])
+                    if ranked_keywords:
+                        tracked_keywords = [kw.get("keyword", "") for kw in ranked_keywords if kw.get("keyword")]
+                    
+                    if not tracked_keywords:
+                        tracked_keywords = [domain.split('.')[0]]
+                    
+                    logger.info(f"[Goal Setting] Checking {len(tracked_keywords)} keywords for SERP features")
+                    
+                    try:
+                        for keyword in tracked_keywords[:10]:  # Check up to 10 keywords
+                            try:
+                                with httpx.Client(timeout=15.0) as client:
+                                    resp = client.post(
+                                        "https://google.serper.dev/search",
+                                        json={"q": keyword, "gl": "us", "hl": "en"},
+                                        headers={"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
+                                    )
+                                    if resp.status_code == 200:
+                                        data = resp.json()
+                                        domain_clean = domain.lower()
+                                        
+                                        # 1. Featured Snippet
+                                        if not active_features["featured_snippet"]:
+                                            ab = data.get("answerBox", {})
+                                            if ab and domain_clean in ab.get("link", "").lower():
+                                                active_features["featured_snippet"] = True
+                                                serp_features_breakdown.append({"type": "Featured Snippet", "keyword": keyword})
+                                        
+                                        # 2. People Also Ask
+                                        if not active_features["people_also_ask"]:
+                                            for item in data.get("peopleAlsoAsk", []):
+                                                if domain_clean in item.get("link", "").lower():
+                                                    active_features["people_also_ask"] = True
+                                                    serp_features_breakdown.append({"type": "People Also Ask", "keyword": keyword})
+                                                    break
+                                        
+                                        # 3. Image Pack
+                                        if not active_features["image_pack"]:
+                                            for img in data.get("images", []):
+                                                if domain_clean in (img.get("link", "") or img.get("source", "")).lower():
+                                                    active_features["image_pack"] = True
+                                                    serp_features_breakdown.append({"type": "Image Pack", "keyword": keyword})
+                                                    break
+                                        
+                                        # 4. Video Carousel
+                                        if not active_features["video_carousel"]:
+                                            for vid in data.get("videos", []):
+                                                if domain_clean in vid.get("link", "").lower():
+                                                    active_features["video_carousel"] = True
+                                                    serp_features_breakdown.append({"type": "Video Carousel", "keyword": keyword})
+                                                    break
+                                        
+                                        # 5. Knowledge Panel
+                                        if not active_features["knowledge_panel"]:
+                                            kg = data.get("knowledgeGraph", {})
+                                            if kg and domain_clean in (kg.get("website", "") or kg.get("link", "")).lower():
+                                                active_features["knowledge_panel"] = True
+                                                serp_features_breakdown.append({"type": "Knowledge Panel", "keyword": keyword})
+                                        
+                                        # 6. Local Pack
+                                        if not active_features["local_pack"]:
+                                            for place in data.get("places", []):
+                                                if domain_clean in (place.get("website", "") or place.get("link", "")).lower():
+                                                    active_features["local_pack"] = True
+                                                    serp_features_breakdown.append({"type": "Local Pack", "keyword": keyword})
+                                                    break
+                                        
+                                        # Early exit if all 6 found
+                                        if all(active_features.values()):
+                                            break
+                            except Exception as kw_err:
+                                logger.error(f"[Goal Setting] Error checking keyword '{keyword}': {kw_err}")
+                        
+                        serp_features_count = sum(1 for v in active_features.values() if v)
+                        logger.info(f"[Goal Setting] SERP Features Active: {serp_features_count}/6")
+                    except Exception as serp_err:
+                        logger.error(f"[Goal Setting] SERP API error: {serp_err}")
+                
+                metrics["serp-features"] = str(serp_features_count)
+                metrics["serp-features-breakdown"] = serp_features_breakdown
+                
+                # =====================================================
+                # Domain Authority - FETCH DIRECTLY FROM MOZ API
+                # =====================================================
+                moz_access_id = os.getenv("MOZ_ACCESS_ID")
+                moz_secret_key = os.getenv("MOZ_SECRET_KEY")
+                da_score = 0
+                
+                if moz_access_id and moz_secret_key and domain:
+                    logger.info(f"[Goal Setting] Fetching Domain Authority from Moz for {domain}")
+                    try:
+                        import base64
+                        credentials = f"{moz_access_id}:{moz_secret_key}"
+                        encoded = base64.b64encode(credentials.encode()).decode()
+                        
+                        with httpx.Client(timeout=15.0) as client:
+                            resp = client.post(
+                                "https://lsapi.seomoz.com/v2/url_metrics",
+                                json={"targets": [domain]},
+                                headers={"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
+                            )
+                            if resp.status_code == 200:
+                                results = resp.json().get("results", [])
+                                if results:
+                                    da_score = int(results[0].get("domain_authority", 0))
+                                    logger.info(f"[Goal Setting] Moz returned DA={da_score}")
+                    except Exception as moz_err:
+                        logger.error(f"[Goal Setting] Moz API error: {moz_err}")
+                
+                metrics["domain-authority"] = str(da_score)
                 
                 logger.info(f"[Goal Setting] LIVE metrics for user {user_id}: {metrics}")
                 
