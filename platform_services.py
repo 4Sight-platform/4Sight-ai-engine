@@ -1850,6 +1850,9 @@ async def get_user_goals(user_id: str) -> StandardResponse:
                         tracked_keywords=tracked_keywords if tracked_keywords else None,
                         competitors=competitors if competitors else None
                     )
+                    # Add site_url to asis_summary for SERP and DA API calls
+                    if asis_summary:
+                        asis_summary["site_url"] = site_url
                     logger.info(f"[Goals] Fetched LIVE AS-IS summary for user {user_id}")
             except Exception as e:
                 logger.warning(f"[Goals] Could not fetch live AS-IS data for user {user_id}: {e}")
