@@ -1346,14 +1346,18 @@ async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
     """
     try:
         # Get fresh access token
-        access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        # Get fresh access token (Safe Mode)
+        try:
+            access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
+        except Exception as e:
+            logger.warning(f"OAuth connection failed: {e}")
+            access_token_result = {}
+
         if not access_token_result.get("access_token"):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="No valid access token. Please reconnect Google account."
-            )
-        
-        access_token = access_token_result["access_token"]
+            logger.warning("No access token available. Proceeding in limited mode.")
+            access_token = None
+        else:
+            access_token = access_token_result["access_token"]
         
         # Fetch competitors from profile if not provided
         competitors = request.competitors
@@ -1433,7 +1437,8 @@ async def get_asis_parameters(request: AsIsParametersRequest) -> AsIsParametersR
             site_url=request.site_url,
             priority_urls=request.priority_urls,
             tab=request.tab,
-            status_filter=request.status_filter
+            status_filter=request.status_filter,
+            tracked_keywords=request.tracked_keywords
         )
         
         return AsIsParametersResponse(

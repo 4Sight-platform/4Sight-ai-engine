@@ -148,6 +148,215 @@ class BacklinkAnalyzer:
         
         return results
     
+    def calculate_spam_score(
+        self,
+        analysis: Dict[str, Any],
+        linking_domains: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Calculate spam score based on link quality heuristics.
+        
+        Args:
+            analysis: Backlink analysis results
+            linking_domains: List of linking domains
+            
+        Returns:
+            Spam score analysis
+        """
+        spam_indicators = 0
+        max_indicators = 10
+        
+        dofollow_ratio = analysis.get("dofollow_ratio", 0.5)
+        anchor_dist = analysis.get("anchor_distribution", {})
+        exact_match = anchor_dist.get("exact_match", 0)
+        total_anchors = sum(anchor_dist.values()) if anchor_dist else 0
+        
+        # Indicator 1: Excessive dofollow links (>95% suspicious)
+        if dofollow_ratio > 0.95:
+            spam_indicators += 2
+        
+        # Indicator 2: Excessive exact-match anchors (>30%)
+        if total_anchors > 0 and (exact_match / total_anchors) > 0.3:
+            spam_indicators += 2
+        
+        # Indicator 3: Low authority domains
+        auth_dist = analysis.get("authority_distribution", {})
+        low_auth = auth_dist.get("low", 0)
+        total_analyzed = analysis.get("domains_analyzed", 1)
+        if total_analyzed > 0 and (low_auth / total_analyzed) > 0.7:
+            spam_indicators += 2
+        
+        # Indicator 4: Suspicious TLDs
+        suspicious_tlds = ['.info', '.biz', '.xyz', '.top', '.win']
+        suspicious_count = sum(
+            1 for domain in linking_domains 
+            if any(domain.endswith(tld) for tld in suspicious_tlds)
+        )
+        if len(linking_domains) > 0 and (suspicious_count / len(linking_domains)) > 0.2:
+            spam_indicators += 2
+        
+        # Indicator 5: Very short domain names (often spam)
+        short_domains = sum(
+            1 for domain in linking_domains
+            if len(domain.split('.')[0]) < 4
+        )
+        if len(linking_domains) > 0 and (short_domains / len(linking_domains)) > 0.3:
+            spam_indicators += 2
+        
+        # Calculate spam score (0-100, higher = more spam)
+        spam_score = int((spam_indicators / max_indicators) * 100)
+        
+        if spam_score < 20:
+            status = "optimal"
+            message = "Low spam signals detected"
+        elif spam_score < 40:
+            status = "needs_attention"
+            message = "Moderate spam signals - review backlink profile"
+        else:
+            status = "critical"
+            message = "High spam signals - toxic backlinks present"
+        
+        return {
+            "spam_score": spam_score,
+            "spam_indicators_found": spam_indicators,
+            "status": status,
+            "message": message,
+            "details": {
+                "excessive_dofollow": dofollow_ratio > 0.95,
+                "excessive_exact_match": total_anchors > 0 and (exact_match / total_anchors) > 0.3,
+                "low_authority_ratio": (low_auth / total_analyzed) if total_analyzed > 0 else 0,
+                "suspicious_tld_count": suspicious_count
+            }
+        }
+    
+    def analyze_link_context_quality(
+        self,
+        links_found: List[Dict],
+        target_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Analyze contextual quality of backlinks.
+        
+        Args:
+            links_found: List of link data from analysis
+            target_domain: Target domain
+            
+        Returns:
+            Contextual link quality analysis
+        """
+        contextual_links = 0
+        footer_sidebar_links = 0
+        homepage_links = 0
+        content_links = 0
+        
+        for link in links_found:
+            source_url = link.get("link_url", "").lower()
+            
+            # Heuristic: Links from homepage or root
+            if source_url.count('/') <= 3:
+                homepage_links += 1
+            else:
+                content_links += 1
+            
+            # Assume content pages are more contextual
+            if '/' in source_url and source_url.count('/') > 3:
+                contextual_links += 1
+        
+        total = len(links_found)
+        contextual_ratio = contextual_links / total if total > 0 else 0
+        
+        if contextual_ratio >= 0.7:
+            status = "optimal"
+            message = f"{int(contextual_ratio*100)}% contextual links - strong relevance"
+        elif contextual_ratio >= 0.4:
+            status = "needs_attention"
+            message = f"{int(contextual_ratio*100)}% contextual links - moderate quality"
+        else:
+            status = "needs_attention"
+            message = f"{int(contextual_ratio*100)}% contextual links - many sitewide/footer links"
+        
+        return {
+            "contextual_link_count": contextual_links,
+            "homepage_link_count": homepage_links,
+            "content_link_count": content_links,
+            "contextual_ratio": round(contextual_ratio, 2),
+            "status": status,
+            "message": message
+        }
+    
+    def detect_irrelevant_links(
+        self,
+        linking_domains: List[str],
+        target_domain: str,
+        target_keywords: List[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Detect potentially irrelevant linking domains.
+        
+        Uses heuristics based on domain relevance indicators.
+        
+        Args:
+            linking_domains: List of linking domains
+            target_domain: Target website domain
+            target_keywords: Keywords for relevance matching
+            
+        Returns:
+            Irrelevant link analysis
+        """
+        irrelevant_count = 0
+        relevant_count = 0
+        
+        # Get target domain's niche indicators from domain name
+        target_name = target_domain.split('.')[0].lower()
+        
+        for domain in linking_domains:
+            domain_lower = domain.lower()
+            
+            # Check if domains share keywords
+            has_keyword_overlap = False
+            if target_keywords:
+                for keyword in target_keywords:
+                    if keyword.lower() in domain_lower:
+                        has_keyword_overlap = True
+                        break
+            
+            # Check if domain names are related
+            domain_name = domain.split('.')[0].lower()
+            is_related = (
+                has_keyword_overlap or
+                target_name in domain_name or
+                domain_name in target_name or
+                len(set(target_name.split('-')) & set(domain_name.split('-'))) > 0
+            )
+            
+            if is_related:
+                relevant_count += 1
+            else:
+                irrelevant_count += 1
+        
+        total = len(linking_domains)
+        irrelevant_ratio = irrelevant_count / total if total > 0 else 0
+        
+        if irrelevant_ratio < 0.2:
+            status = "optimal"
+            message = f"Only {int(irrelevant_ratio*100)}% potentially irrelevant links"
+        elif irrelevant_ratio < 0.4:
+            status = "needs_attention"
+            message = f"{int(irrelevant_ratio*100)}% potentially irrelevant links"
+        else:
+            status = "critical"
+            message = f"{int(irrelevant_ratio*100)}% irrelevant links - review link profile"
+        
+        return {
+            "irrelevant_count": irrelevant_count,
+            "relevant_count": relevant_count,
+            "irrelevant_ratio": round(irrelevant_ratio, 2),
+            "total_analyzed": total,
+            "status": status,
+            "message": message
+        }
+
+    
     async def _analyze_single_domain(
         self,
         target_domain: str,

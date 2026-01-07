@@ -238,6 +238,7 @@ class AsIsParametersRequest(BaseModel):
     tab: str = Field(default="onpage", description="Tab: onpage, offpage, or technical")
     status_filter: Optional[str] = Field(default=None, description="Filter: optimal or needs_attention")
     priority_urls: Optional[List[str]] = Field(default=None, description="Priority URLs to crawl")
+    tracked_keywords: Optional[List[str]] = Field(default=None, description="Tracked keywords for analysis")
 
 
 class AsIsRefreshRequest(BaseModel):
