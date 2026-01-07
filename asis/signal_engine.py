@@ -147,14 +147,14 @@ class SignalEngine:
                 "xml_sitemap_health",
                 "robots_txt_configuration",
                 "indexed_vs_non_indexed_pages",
-                "crawl_budget_efficiency"
+                "crawl_budget_efficiency",
+                "orphan_urls"
             ]
         },
         "canonicalization_duplicate": {
             "name": "Canonicalization & Duplicate Control",
             "description": "Handling of duplicate content and canonical tags",
             "sub_parameters": [
-                "orphan_urls",
                 "canonical_tag_implementation",
                 "duplicate_urls",
                 "http_vs_https_duplicates",
@@ -1459,45 +1459,54 @@ class SignalEngine:
         sitemap_exists = data.get("sitemap_exists", False)
         if sitemap_valid:
             details["xml_sitemap_health"] = {"value": "Healthy", "status": "optimal"}
-            score += 25
+            score += 20
         elif sitemap_exists:
             details["xml_sitemap_health"] = {"value": "Exists (Issues)", "status": "needs_attention"}
-            score += 15
+            score += 10
         else:
             details["xml_sitemap_health"] = {"value": "Missing", "status": "critical"}
-            score += 5
+            score += 0
             
         # 2. Robots.txt configuration
         robots_valid = data.get("robots_txt_valid", False)
         if robots_valid:
             details["robots_txt_configuration"] = {"value": "Correct", "status": "optimal"}
-            score += 25
+            score += 20
         else:
             details["robots_txt_configuration"] = {"value": "Invalid/Missing", "status": "critical"}
-            score += 5
+            score += 0
             
         # 3. Indexed vs non-indexed pages
         coverage = data.get("index_coverage_ratio", 0)
         pct = int(coverage * 100)
         if coverage >= 0.9:
             details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed", "status": "optimal"}
-            score += 25
+            score += 20
         elif coverage >= 0.7:
             details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed", "status": "needs_attention"}
-            score += 15
+            score += 10
         else:
             details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed (low)", "status": "critical"}
-            score += 5
+            score += 0
             
         # 4. Crawl budget efficiency (Heuristic based on errors)
         crawl_errors = data.get("crawl_errors", 0)
         if crawl_errors == 0:
             details["crawl_budget_efficiency"] = {"value": "Efficient", "status": "optimal"}
-            score += 25
+            score += 20
         else:
             details["crawl_budget_efficiency"] = {"value": "Inefficient (Errors)", "status": "needs_attention"}
             score += 10
             
+        # 5. Orphan URLs (Moved from Canonicalization)
+        orphans = spider_data.get("orphan_urls", []) if spider_data else []
+        if not orphans:
+            details["orphan_urls"] = {"value": "None", "status": "optimal"}
+            score += 20
+        else:
+            details["orphan_urls"] = {"value": f"{len(orphans)} detected", "status": "needs_attention"}
+            score += 10
+
         return min(score, 100), details
 
     def _score_canonicalization_duplicate(self, data: Dict, spider_data: Dict = None) -> tuple[float, Dict]:
@@ -1513,20 +1522,13 @@ class SignalEngine:
         score = 0
         details = {}
         
-        # 1. Orphan URLs (Requires spider)
-        orphans = spider_data.get("orphan_urls", []) if spider_data else []
-        if not orphans:
-            details["orphan_urls"] = {"value": "None", "status": "optimal"}
-            score += 20
-        else:
-            details["orphan_urls"] = {"value": f"{len(orphans)} detected", "status": "needs_attention"}
-            score += 10
+        # 1. Orphan URLs moved to Crawl & Indexation
             
-        # 2. Canonical tag implementation
+        # 1. Canonical tag implementation
         canon_issues = data.get("canonical_issues_count", 0)
         if canon_issues == 0:
             details["canonical_tag_implementation"] = {"value": "Present", "status": "optimal"}
-            score += 20
+            score += 25
         else:
             details["canonical_tag_implementation"] = {"value": f"{canon_issues} issues", "status": "needs_attention"}
             score += 10
@@ -1535,7 +1537,7 @@ class SignalEngine:
         dup_count = data.get("duplicate_title_count", 0)
         if dup_count == 0:
             details["duplicate_urls"] = {"value": "None", "status": "optimal"}
-            score += 20
+            score += 25
         else:
             details["duplicate_urls"] = {"value": f"{dup_count} potential duplicates", "status": "needs_attention"}
             score += 10
@@ -1545,7 +1547,7 @@ class SignalEngine:
         # Assuming no mixing if https is enforced
         if https_enabled:
             details["http_vs_https_duplicates"] = {"value": "HTTP-0/HTTPS-All", "status": "optimal"}
-            score += 20
+            score += 25
         else:
             details["http_vs_https_duplicates"] = {"value": "HTTP Mixed", "status": "critical"}
             score += 5
@@ -1554,7 +1556,7 @@ class SignalEngine:
         consistent_slash = data.get("trailing_slash_consistent", True)
         if consistent_slash:
             details["trailing_slash_issues"] = {"value": "Consistent", "status": "optimal"}
-            score += 20
+            score += 25
         else:
             details["trailing_slash_issues"] = {"value": "Inconsistent", "status": "needs_attention"}
             score += 10
