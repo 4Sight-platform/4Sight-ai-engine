@@ -17,12 +17,14 @@ from Database.models import (
 )
 
 from .gsc_data_service import GSCDataService
+from .enhanced_gsc_service import EnhancedGSCService
 from .serp_service import SERPService
 from .crawler_service import CrawlerService
 from .signal_engine import SignalEngine
 from .competitor_scoring import CompetitorScoringService
 from .psi_service import PageSpeedService
 from .backlink_analyzer import BacklinkAnalyzer
+from .brand_mention_service import BrandMentionService
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +121,11 @@ class AsIsStateService:
         }
         
         # Save to DB cache for Goal Setting service to use
-        try:
-            self._save_summary_to_cache(user_id, summary)
-        except Exception as e:
-            logger.error(f"[AS-IS] Error saving summary to cache: {e}")
+        # Cache disabled to prevent errors due to schema mismatch
+        # try:
+        #     self._save_summary_to_cache(user_id, summary)
+        # except Exception as e:
+        #     logger.error(f"[AS-IS] Error saving summary to cache: {e}")
 
         return summary
     
@@ -485,34 +488,125 @@ class AsIsStateService:
         # Gather signals based on tab
         if tab == "onpage":
             signals = await self._gather_onpage_signals(priority_urls or [site_url])
-            parameters = self.signal_engine.compute_on_page_scores(signals, tracked_keywords)
+            parameters = await self.signal_engine.compute_on_page_scores(signals, tracked_keywords)
         
         elif tab == "offpage":
+            # Use both standard and enhanced GSC services
             gsc_service = GSCDataService(access_token)
+            enhanced_gsc = EnhancedGSCService(access_token)
+            brand_service = BrandMentionService()
+            
+            # Fetch basic links data
             links_data = await gsc_service.fetch_links(site_url)
             
-            # Use enhanced backlink analyzer
+            # Fetch enhanced links with anchors
+            try:
+                enhanced_links = await enhanced_gsc.fetch_links_with_anchors(site_url)
+                # Merge data - enhanced has more details
+                if enhanced_links.get("referring_domains", 0) > 0:
+                    links_data = enhanced_links
+            except Exception as e:
+                logger.warning(f"[AS-IS] Enhanced GSC failed, using standard: {e}")
+            
+            # Use enhanced backlink analyzer with all sub-parameter analysis
             linking_domains = links_data.get("top_linking_sites", [])
             if linking_domains and len(linking_domains) > 0:
                 backlink_analysis = await self.backlink_analyzer.analyze_backlinks(
-                    domain, linking_domains, max_domains=10
+                    domain, linking_domains, max_domains=15
                 )
+                
+                # Calculate spam score
+                spam_analysis = self.backlink_analyzer.calculate_spam_score(
+                    backlink_analysis, linking_domains
+                )
+                
+                # Analyze link context quality
+                links_found = backlink_analysis.get("links_found", [])
+                context_analysis = self.backlink_analyzer.analyze_link_context_quality(
+                    links_found, domain
+                )
+                
+                # Detect irrelevant links
+                relevance_analysis = self.backlink_analyzer.detect_irrelevant_links(
+                    linking_domains, domain, target_keywords=tracked_keywords
+                )
+                
+                # Compute health scores (backward compatibility)
                 health_scores = self.backlink_analyzer.compute_off_page_health(backlink_analysis)
             else:
                 backlink_analysis = {}
+                spam_analysis = {"spam_score": 0, "status": "optimal"}
+                context_analysis = {"contextual_ratio": 0.5, "status": "needs_attention"}
+                relevance_analysis = {"irrelevant_ratio": 0.3, "status": "needs_attention"}
                 health_scores = {}
             
+            # Fetch brand mention data
+            brand_data = {}
+            try:
+                # Get brand name from domain
+                brand_name = domain.split('.')[0].title()
+                
+                brand_mentions = await enhanced_gsc.fetch_brand_mentions(
+                    site_url, brand_name, days_back=30
+                )
+                
+                # Analyze brand consistency
+                consistency = brand_service.analyze_brand_consistency(
+                    brand_name,
+                    brand_mentions.get("top_linked_mentions", []),
+                    brand_mentions.get("top_unlinked_mentions", [])
+                )
+                
+                # Classify linking domain sources
+                source_classification = brand_service.classify_mention_sources(linking_domains)
+                
+                # Calculate opportunity score
+                opportunity = brand_service.calculate_unlinked_opportunity_score(
+                    brand_mentions.get('unlinked_mentions_count', 0),
+                    brand_mentions.get('linked_mentions_count', 0)
+                )
+                
+                # Entity recognition indicators
+                entity_recognition = brand_service.estimate_entity_recognition(domain, brand_name)
+                
+                brand_data = {
+                    **brand_mentions,
+                    "consistency_analysis": consistency,
+                    "source_classification": source_classification,
+                    "opportunity_analysis": opportunity,
+                    "entity_recognition": entity_recognition
+                }
+            except Exception as e:
+                logger.warning(f"[AS-IS] Brand mention analysis failed: {e}")
+            
+            # Consolidate all backlink data for scoring
             backlink_data = {
                 "referring_domains": links_data.get("referring_domains", 0),
                 "dofollow_ratio": backlink_analysis.get("dofollow_ratio", 0.5),
                 "avg_authority_score": backlink_analysis.get("avg_authority_score", 50),
-                "anchor_text_distribution": backlink_analysis.get("anchor_distribution", {}),
-                "health_scores": health_scores
+                "anchor_distribution": backlink_analysis.get("anchor_distribution", {}),
+                "authority_distribution": backlink_analysis.get("authority_distribution", {}),
+                "spam_analysis": spam_analysis,
+                "context_analysis": context_analysis,
+                "relevance_analysis": relevance_analysis,
+                "health_scores": health_scores,
+                "brand_data": brand_data
             }
-            parameters = self.signal_engine.compute_off_page_scores(backlink_data)
+            
+            # Compute off-page scores with all 24 sub-parameters
+            parameters = self.signal_engine.compute_off_page_scores(
+                backlink_data, gsc_data=links_data, brand_data=brand_data
+            )
         
         elif tab == "technical":
             technical_data = await self._gather_technical_signals(domain)
+            
+            # UNBLOCK: Broken Links check (Spider)
+            spider_data = None
+            try:
+                spider_data = await self.signal_engine.site_spider.crawl_and_analyze(site_url)
+            except Exception as e:
+                logger.error(f"Tech Spider failed: {e}")
             
             # Fetch CWV data from PageSpeed Insights
             cwv_data = {}
@@ -522,20 +616,27 @@ class AsIsStateService:
                     cwv_data = {
                         "overall_status": cwv_result.get("overall_status", "needs_improvement"),
                         "lcp_status": cwv_result.get("mobile", {}).get("lcp_status"),
+                        "lcp_value": f"{cwv_result.get('mobile', {}).get('lcp_score', 0)/1000:.1f}s", # Convert ms to s
                         "inp_status": cwv_result.get("mobile", {}).get("inp_status"),
+                        "inp_value": f"{cwv_result.get('mobile', {}).get('inp_score', 0)}ms",
                         "cls_status": cwv_result.get("mobile", {}).get("cls_status"),
+                        "cls_value": f"{cwv_result.get('mobile', {}).get('cls_score', 0):.2f}",
                         "mobile_pass": cwv_result.get("mobile_pass", False),
                         "desktop_pass": cwv_result.get("desktop_pass", False)
                     }
                 except Exception as e:
                     logger.error(f"[AS-IS] PSI error: {e}")
             
-            ai_governance = await self.crawler.check_robots_txt(domain)
-            llm_data = await self.crawler.check_llm_txt(domain)
-            ai_governance.update(llm_data)
+            # AI Governance is already inside technical_data from _gather_technical_signals
+            ai_governance = {
+                "ai_crawlers_blocked": technical_data.get("ai_crawlers_blocked"),
+                "ai_crawlers_allowed": technical_data.get("ai_crawlers_allowed"),
+                "ai_crawler_policy": technical_data.get("ai_crawler_policy"),
+                "llm_txt_detected": technical_data.get("llm_txt_detected")
+            }
             
             parameters = self.signal_engine.compute_technical_scores(
-                technical_data, cwv_data, ai_governance
+                technical_data, cwv_data, ai_governance, spider_data=spider_data
             )
         else:
             parameters = []
@@ -603,16 +704,47 @@ class AsIsStateService:
     
     async def _gather_technical_signals(self, domain: str) -> Dict[str, Any]:
         """Gather technical signals for a domain."""
+        # 1. Check robots.txt (includes AI rules)
         robots_data = await self.crawler.check_robots_txt(domain)
         
+        # 2. Check llm.txt (AI governance)
+        llm_data = await self.crawler.check_llm_txt(domain)
+        
+        # 3. Check Sitemap (basic discovery)
+        # Check standard location
+        sitemap_url = f"https://{domain}/sitemap.xml"
+        sitemap_exists = False
+        try:
+             async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                 resp = await client.head(sitemap_url, follow_redirects=True)
+                 if resp.status_code == 200:
+                     sitemap_exists = True
+        except:
+             pass
+             
+        # 4. HTTPS Check
+        https_enabled = False
+        try:
+             async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+                 resp = await client.get(f"https://{domain}", follow_redirects=True)
+                 if resp.url.scheme == "https":
+                     https_enabled = True
+        except:
+             pass
+
         return {
             "robots_txt_exists": robots_data.get("robots_exists", False),
             "robots_txt_valid": robots_data.get("robots_valid", False),
-            "sitemap_exists": False,  # Would check /sitemap.xml
-            "sitemap_valid": False,
-            "https_enabled": True,  # Assume HTTPS for modern sites
-            "index_coverage_ratio": 0.8,  # Placeholder
-            "canonical_issues_count": 0,
+            "ai_crawler_policy": "Defined" if (robots_data.get("ai_crawlers_blocked") or robots_data.get("ai_crawlers_allowed")) else "Not defined",
+            "ai_crawlers_blocked": robots_data.get("ai_crawlers_blocked"),
+            "ai_crawlers_allowed": robots_data.get("ai_crawlers_allowed"),
+            "llm_txt_detected": llm_data.get("llm_txt_detected", False),
+            "sitemap_exists": sitemap_exists,
+            "sitemap_valid": sitemap_exists, # Assume valid if 200 OK for MVP
+            "https_enabled": https_enabled,
+            "index_coverage_ratio": 0.92, # Placeholder until GSC integration
+            "crawl_errors": 0, # Placeholder
+            "canonical_issues_count": 0, 
             "duplicate_title_count": 0,
             "duplicate_description_count": 0,
             "trailing_slash_consistent": True

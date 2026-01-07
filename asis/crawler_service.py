@@ -70,7 +70,7 @@ class CrawlerService:
         }
         
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=self.TIMEOUT) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=self.TIMEOUT, verify=False) as client:
                 response = await client.get(url, headers=self.headers)
                 result["http_status"] = response.status_code
                 
@@ -292,6 +292,7 @@ class CrawlerService:
         has_params = bool(parsed.query)
         
         return {
+            "url": url,
             "url_length": len(url),
             "url_has_parameters": has_params,
             "url_depth": depth
