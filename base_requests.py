@@ -342,6 +342,33 @@ class AsIsRefreshResponse(BaseModel):
     data: Dict[str, Any]
 
 
+# ==================== AS-IS State Lock Models ====================
+
+class AsIsLockRequest(BaseModel):
+    """Request to initiate As-Is State lock and create snapshot"""
+    user_id: str = Field(..., description="User ID")
+    site_url: str = Field(..., description="User's website URL")
+    tracked_keywords: Optional[List[str]] = Field(default=None, description="Keywords to track")
+    priority_urls: Optional[List[str]] = Field(default=None, description="Priority URLs to analyze")
+    competitors: Optional[List[str]] = Field(default=None, description="Competitor domains")
+
+
+class AsIsLockStatusResponse(BaseModel):
+    """Response for lock status check"""
+    status: str = Field(..., description="Request status: success/error")
+    message: str = Field(..., description="Human-readable message")
+    user_id: str = Field(..., description="User ID")
+    data: Dict[str, Any] = Field(default_factory=dict, description="Lock status data")
+
+
+class AsIsLockResponse(BaseModel):
+    """Response for lock initiation"""
+    status: str = Field(..., description="Request status: success/error")
+    message: str = Field(..., description="Human-readable message")
+    user_id: str = Field(..., description="User ID")
+    data: Dict[str, Any] = Field(default_factory=dict, description="Lock and snapshot data")
+
+
 # ==================== ACTION PLAN Models ====================
 
 class ActionPlanGenerateRequest(BaseModel):
