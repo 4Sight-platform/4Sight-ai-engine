@@ -229,6 +229,7 @@ class AsIsSummaryRequest(BaseModel):
     site_url: str = Field(..., description="User's website URL")
     tracked_keywords: Optional[List[str]] = Field(default=None, description="Tracked keywords")
     competitors: Optional[List[str]] = Field(default=None, description="Competitor domains")
+    skip_cache: Optional[bool] = Field(default=False, description="If True, bypasses DB cache")
 
 
 class AsIsParametersRequest(BaseModel):
