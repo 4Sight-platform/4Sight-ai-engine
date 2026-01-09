@@ -185,16 +185,70 @@ class GSCDataService:
             logger.error(f"[GSC] Error fetching links: {e}")
             return result
     
+    async def fetch_site_totals(
+        self,
+        site_url: str,
+        start_date: str,
+        end_date: str
+    ) -> Dict[str, Any]:
+        """
+        Fetch site-wide aggregates without dimensions to include anonymized queries.
+        This matches the GSC UI "Total" numbers.
+        """
+        encoded_site = quote(site_url, safe='')
+        url = f"{self.API_BASE}/sites/{encoded_site}/searchAnalytics/query"
+        
+        payload = {
+            "startDate": start_date,
+            "endDate": end_date,
+            "dimensions": [],  # No dimensions = Site-wide totals
+            "aggregationType": "byProperty"
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=self.headers, timeout=60.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                rows = data.get("rows", [])
+                if rows:
+                    # Without dimensions, we get a single row
+                    row = rows[0]
+                    return {
+                        "total_clicks": row.get("clicks", 0),
+                        "total_impressions": row.get("impressions", 0),
+                        "avg_ctr": round(row.get("ctr", 0) * 100, 2),
+                        "avg_position": round(row.get("position", 0), 1),
+                        "top10_count": 0,    # Not applicable for site-wide
+                        "keyword_count": 0   # Not applicable
+                    }
+                return self._calculate_totals([]) # Return zeros
+                
+        except Exception as e:
+            logger.error(f"[GSC] Error fetching site totals: {e}")
+            return self._calculate_totals([]) # Fallback to zeros
+
     async def fetch_all_metrics(self, site_url: str) -> Dict[str, Any]:
         """
         Fetch all GSC metrics for both current and previous periods.
-        
-        Returns:
-            Dict with current and previous period data
         """
         date_ranges = self._get_date_ranges()
         
-        # Fetch current period
+        # 1. Fetch site-wide totals (accurate traffic numbers)
+        current_totals = await self.fetch_site_totals(
+            site_url, 
+            date_ranges["current"]["start"], 
+            date_ranges["current"]["end"]
+        )
+        
+        previous_totals = await self.fetch_site_totals(
+            site_url, 
+            date_ranges["previous"]["start"], 
+            date_ranges["previous"]["end"]
+        )
+        
+        # 2. Fetch specific query/page breakdowns
         current_queries = await self.fetch_query_metrics(
             site_url, 
             date_ranges["current"]["start"],
@@ -207,7 +261,6 @@ class GSCDataService:
             date_ranges["current"]["end"]
         )
         
-        # Fetch previous period
         previous_queries = await self.fetch_query_metrics(
             site_url,
             date_ranges["previous"]["start"],
@@ -220,12 +273,18 @@ class GSCDataService:
             date_ranges["previous"]["end"]
         )
         
+        # 3. Augment totals with counts derived from query lists (since site-wide API doesn't give these)
+        # Note: We keep the Clicks/Impressions from fetch_site_totals (Correct)
+        # But we add top10_count from the query analysis (Best Effort)
+        query_derived_stats = self._calculate_totals(current_queries)
+        prev_derived_stats = self._calculate_totals(previous_queries)
+        
+        current_totals["top10_count"] = query_derived_stats["top10_count"]
+        current_totals["keyword_count"] = query_derived_stats["keyword_count"]
+        previous_totals["top10_count"] = prev_derived_stats["top10_count"]
+        
         # Fetch links (single snapshot)
         links_data = await self.fetch_links(site_url)
-        
-        # Calculate aggregates
-        current_totals = self._calculate_totals(current_queries)
-        previous_totals = self._calculate_totals(previous_queries)
         
         return {
             "date_ranges": date_ranges,
