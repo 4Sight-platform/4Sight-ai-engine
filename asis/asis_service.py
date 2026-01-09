@@ -66,7 +66,8 @@ class AsIsStateService:
         site_url: str,
         tracked_keywords: List[str] = None,
         competitors: List[str] = None,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        skip_cache: bool = False
     ) -> Dict[str, Any]:
         """
         Get AS-IS summary data for the four top cards.
@@ -78,6 +79,7 @@ class AsIsStateService:
         
         Args:
             force_refresh: If True, bypasses cache and fetches live data
+            skip_cache: If True, completely skips DB cache (for debugging)
         
         Returns:
             Dict with card data for:
@@ -89,9 +91,12 @@ class AsIsStateService:
         MAX_CACHE_AGE_DAYS = 90  # 3 months
         
         # === STEP 1: Check DB for recent cached data ===
-        logger.info(f"[AS-IS] 🔍 Checking database for cached summary... (user: {user_id})")
+        if skip_cache:
+            logger.info(f"[AS-IS] ⚠️ skip_cache=True - bypassing DB, fetching live data")
+        else:
+            logger.info(f"[AS-IS] 🔍 Checking database for cached summary... (user: {user_id})")
         
-        if not force_refresh:
+        if not force_refresh and not skip_cache:
             try:
                 db = next(get_db())
                 cache = db.query(AsIsSummaryCache).filter(

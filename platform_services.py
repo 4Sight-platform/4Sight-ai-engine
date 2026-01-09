@@ -1400,7 +1400,8 @@ async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
             access_token=access_token,
             site_url=request.site_url,
             tracked_keywords=request.tracked_keywords,
-            competitors=competitors
+            competitors=competitors,
+            skip_cache=request.skip_cache or False
         )
         
         return AsIsSummaryResponse(
