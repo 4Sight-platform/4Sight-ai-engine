@@ -176,9 +176,17 @@ class ErrorResponse(BaseModel):
 class CompetitorSuggestion(BaseModel):
     """Model for a suggested competitor from analysis"""
     domain: str = Field(..., description="Competitor domain")
-    importance: int = Field(..., description="Relevance score based on keyword intersection")
-    priority: str = Field(..., description="Priority bucket: HIGH/MEDIUM/LOW")
+    score: float = Field(..., description="Competitive score (0-100)")
+    priority: str = Field(..., description="Priority bucket: CRITICAL/HIGH/MEDIUM/LOW")
+    frequency: int = Field(..., description="How many times domain appears across keywords")
+    coverage: float = Field(..., description="Percentage of keywords matched")
+    similarity: float = Field(..., description="Business similarity percentage")
     keywords_matched: List[str] = Field(..., description="Keywords where this competitor appeared")
+    avg_position: float = Field(..., description="Average SERP position")
+    
+    # Legacy field for backwards compatibility
+    importance: Optional[int] = Field(None, description="Legacy importance score (deprecated)")
+
 
 
 class Page6KeywordsResponseData(BaseModel):
@@ -216,8 +224,8 @@ class KeywordUniverseInitRequest(BaseModel):
 
 class KeywordSelectionRequest(BaseModel):
     """Finalize Keyword Selection request"""
-    # Must select 10-15 keywords
-    selected_keyword_ids: List[int] = Field(..., min_length=10, max_length=15, description="List of 10-15 selected keyword IDs")
+    # Can select 1-20 keywords (flexible based on what's generated)
+    selected_keyword_ids: List[int] = Field(..., min_length=1, max_length=20, description="List of 1-20 selected keyword IDs")
     lock_until: Optional[str] = Field(None, description="Optional lock expiry date")
 
 

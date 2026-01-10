@@ -19,6 +19,7 @@ from Database.models import (
 from .gsc_data_service import GSCDataService
 from .enhanced_gsc_service import EnhancedGSCService
 from .serp_service import SERPService
+from .serp_ranking_service import SERPRankingService
 from .crawler_service import CrawlerService
 from .signal_engine import SignalEngine
 from .competitor_scoring import CompetitorScoringService
@@ -46,11 +47,13 @@ class AsIsStateService:
         serp_api_key: str = None, 
         psi_api_key: str = None,
         google_cse_api_key: str = None,
-        google_cse_cx: str = None
+        google_cse_cx: str = None,
+        serper_api_key: str = None
     ):
         self.serp_api_key = serp_api_key or os.getenv("SERP_API_KEY")
         self.google_cse_api_key = google_cse_api_key or os.getenv("GOOGLE_CSE_API_KEY")
         self.google_cse_cx = google_cse_cx or os.getenv("GOOGLE_CSE_CX")
+        self.serper_api_key = serper_api_key or os.getenv("SERPER_API_KEY")
         
         self.psi_api_key = psi_api_key or os.getenv("PSI_API_KEY")
         self.signal_engine = SignalEngine()
@@ -180,8 +183,25 @@ class AsIsStateService:
         else:
             logger.info(f"[AS-IS] Force refresh requested - skipping DB check")
         
+        
         # === STEP 2: Fetch live data from APIs ===
         logger.info(f"[AS-IS] 🔄 Syncing data from APIs... (no recent data in DB)")
+        
+        # Fetch selected competitors from database
+        if not competitors:
+            try:
+                from Database.models import OnboardingCompetitor
+                db = next(get_db())
+                selected_comps = db.query(OnboardingCompetitor).filter(
+                    OnboardingCompetitor.user_id == user_id,
+                    OnboardingCompetitor.is_selected == True
+                ).all()
+                competitors = [comp.competitor_url for comp in selected_comps]
+                logger.info(f"[AS-IS] Fetched {len(competitors)} selected competitors from database")
+                db.close()
+            except Exception as e:
+                logger.error(f"[AS-IS] Error fetching competitors: {e}")
+                competitors = []
         
         # Initialize services
         gsc_service = GSCDataService(access_token)
@@ -250,7 +270,7 @@ class AsIsStateService:
             "organic_traffic": self._build_traffic_card(gsc_data),
             "keywords_performance": self._build_keywords_card(gsc_data, tracked_keywords),
             "serp_features": self._build_serp_card(serp_analysis),
-            "competitor_rank": self._build_competitor_card(
+            "competitor_rank": await self._build_competitor_card(
                 site_url, tracked_keywords, competitors, gsc_data, serp_analysis
             ),
             "domain_authority": domain_authority,
@@ -337,7 +357,7 @@ class AsIsStateService:
             logger.error(f"[AS-IS] DB Error in save_summary_to_cache: {e}", exc_info=True)
     
     def _build_traffic_card(self, gsc_data: Dict = None) -> Dict[str, Any]:
-        """Build Organic Traffic card data."""
+        """Build Organic Traffic card data with real top pages."""
         if not gsc_data:
             return {
                 "total_clicks": 0,
@@ -346,6 +366,7 @@ class AsIsStateService:
                 "total_impressions": 0,
                 "impressions_change": 0,
                 "impressions_change_direction": "neutral",
+                "top_pages": [],
                 "data_available": False
             }
         
@@ -355,6 +376,43 @@ class AsIsStateService:
         clicks_change = changes.get("clicks_change", 0)
         impressions_change = changes.get("impressions_change", 0)
         
+        # Process Top Pages (Real Data)
+        current_pages = gsc_data.get("current", {}).get("pages", [])
+        previous_pages = gsc_data.get("previous", {}).get("pages", [])
+        
+        # Map previous pages for change calculation: url -> clicks
+        prev_map = {p["page"]: p["clicks"] for p in previous_pages}
+        
+        top_pages = []
+        # Sort by clicks descending and take top 5
+        sorted_pages = sorted(current_pages, key=lambda x: x["clicks"], reverse=True)[:5]
+        
+        for p in sorted_pages:
+            url = p["page"]
+            clicks = p["clicks"]
+            prev_clicks = prev_map.get(url, 0)
+            
+            # Calculate change details
+            if prev_clicks == 0:
+                change_str = "+100%" if clicks > 0 else "0%"
+            else:
+                pct = ((clicks - prev_clicks) / prev_clicks) * 100
+                sign = "+" if pct > 0 else ""
+                change_str = f"{sign}{int(pct)}%"
+            
+            # Format path for display
+            try:
+                path = urlparse(url).path
+                if not path: path = "/"
+            except:
+                path = url
+            
+            top_pages.append({
+                "page": path,
+                "visitors": clicks,  # Using Clicks as metric
+                "change": change_str
+            })
+        
         return {
             "total_clicks": current.get("total_clicks", 0),
             "clicks_change": clicks_change,
@@ -363,6 +421,7 @@ class AsIsStateService:
             "impressions_change": impressions_change,
             "impressions_change_direction": "up" if impressions_change > 0 else "down" if impressions_change < 0 else "neutral",
             "avg_ctr": current.get("avg_ctr", 0),
+            "top_pages": top_pages,
             "data_available": True
         }
     
@@ -516,7 +575,8 @@ class AsIsStateService:
             "data_available": True
         }
     
-    def _build_competitor_card(
+    
+    async def _build_competitor_card(
         self,
         site_url: str,
         tracked_keywords: List[str] = None,
@@ -524,24 +584,124 @@ class AsIsStateService:
         gsc_data: Dict = None,
         serp_analysis: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """Build Competitor Rank card data with real scoring if available."""
-        if not competitors:
+        """
+        Build Competitor Rank card data with real SERP-based scoring.
+        
+        Fetches actual SERP positions for tracked keywords and calculates
+        visibility scores for user and competitors.
+        """
+        if not competitors or not tracked_keywords:
             return {
                 "your_rank": None,
                 "total_competitors": 0,
                 "your_visibility_score": 0,
                 "empty_state": True,
-                "message": "No competitors configured"
+                "message": "No competitors or keywords configured",
+                "rankings": []
             }
         
+        logger.info(f"[Competitor Card] Building rankings for {len(competitors)} competitors, {len(tracked_keywords)} keywords")
+        
         domain = urlparse(site_url).netloc.replace("www.", "")
+        total_kws = len(tracked_keywords)
+        
+        # Initialize SERP ranking service
+        # Initialize SERP ranking service
+        if not (self.google_cse_api_key and self.google_cse_cx) and not self.serper_api_key:
+            logger.warning("[Competitor Card] No SERP provider credentials found, using fallback")
+            return self._build_competitor_card_fallback(domain, competitors, gsc_data, tracked_keywords)
+        
+        serp_ranker = SERPRankingService(
+            api_key=self.google_cse_api_key,
+            cx=self.google_cse_cx,
+            serper_api_key=self.serper_api_key
+        )
+        
+        try:
+            # Fetch SERP rankings for all keywords
+            logger.info(f"[Competitor Card] Fetching SERP rankings...")
+            serp_rankings = await serp_ranker.fetch_keyword_rankings(
+                keywords=tracked_keywords,
+                competitors=competitors,
+                user_domain=domain
+            )
+            
+            # Build user rankings from SERP data
+            user_rankings = []
+            for keyword, data in serp_rankings.items():
+                if data.get('user_position'):
+                    user_rankings.append({
+                        'keyword': keyword,
+                        'position': data['user_position']
+                    })
+            
+            # Calculate user's visibility score
+            user_score_data = self.competitor_service.compute_visibility_score(
+                domain,
+                user_rankings,
+                total_keywords=total_kws
+            )
+            
+            logger.info(f"[Competitor Card] User score: {user_score_data['visibility_score']}")
+            
+            # Build competitor rankings from SERP data
+            competitor_scores = []
+            comp_rankings_map = {comp: [] for comp in competitors}
+            
+            for keyword, data in serp_rankings.items():
+                for comp_data in data.get('competitors', []):
+                    comp_domain = comp_data['domain']
+                    if comp_domain in comp_rankings_map:
+                        comp_rankings_map[comp_domain].append({
+                            'keyword': keyword,
+                            'position': comp_data['position']
+                        })
+            
+            # Calculate visibility scores for each competitor
+            for comp_domain, rankings in comp_rankings_map.items():
+                score_data = self.competitor_service.compute_visibility_score(
+                    comp_domain,
+                    rankings,
+                    total_keywords=total_kws
+                )
+                competitor_scores.append(score_data)
+                logger.info(f"[Competitor Card] {comp_domain}: {score_data['visibility_score']}")
+            
+            # Rank all domains
+            ranking_data = self.competitor_service.rank_competitors(
+                domain,
+                user_score_data["visibility_score"],
+                competitor_scores
+            )
+            
+            return {
+                "your_rank": ranking_data["user_rank"],
+                "total_competitors": ranking_data["total_competitors"],
+                "your_visibility_score": ranking_data["user_visibility_score"],
+                "rankings": ranking_data["rankings"][:5],  # Top 5 for card
+                "empty_state": False
+            }
+            
+        except Exception as e:
+            logger.error(f"[Competitor Card] Error fetching SERP rankings: {e}")
+            return self._build_competitor_card_fallback(domain, competitors, gsc_data, tracked_keywords)
+    
+    def _build_competitor_card_fallback(
+        self,
+        domain: str,
+        competitors: List[str],
+        gsc_data: Dict,
+        tracked_keywords: List[str]
+    ) -> Dict[str, Any]:
+        """Fallback competitor card using GSC data only."""
+        logger.info("[Competitor Card] Using fallback (GSC data only)")
+        
         total_kws = len(tracked_keywords) if tracked_keywords else 20
         
         # Calculate user's score based on GSC data
         user_rankings = []
         if gsc_data:
             queries = gsc_data.get("current", {}).get("queries", [])
-            # Filter to tracked keywords if available
             if tracked_keywords:
                 target_queries = [q for q in queries if q["query"] in tracked_keywords]
             else:
@@ -559,42 +719,13 @@ class AsIsStateService:
             total_keywords=total_kws
         )
         
-        # Calculate Competitor Scores using SERP Analysis
+        # Mock competitor scores (fallback)
         competitor_scores = []
-        
-        if serp_analysis and serp_analysis.get("results"):
-            # Real Data Logic
-            # Group rankings by competitor
-            comp_rankings = {c: [] for c in competitors}
-            
-            for res in serp_analysis["results"]:
-                kw = res.get("keyword")
-                for entry in res.get("competitors_in_top10", []):
-                    c_domain = entry.get("domain")
-                    
-                    found_comp = next((c for c in competitors if c.lower() in c_domain.lower() or c_domain.lower() in c.lower()), None)
-                    if found_comp:
-                        comp_rankings[found_comp].append({
-                            "keyword": kw,
-                            "position": entry.get("position", 100)
-                        })
-
-            for comp in competitors[:5]:
-                rankings = comp_rankings.get(comp, [])
-                score_data = self.competitor_service.compute_visibility_score(
-                    comp,
-                    rankings,
-                    total_keywords=total_kws
-                )
-                competitor_scores.append(score_data)
-                
-        else:
-            # Fallback Logic (MVP / Mock)
-            for comp in competitors[:5]:
-                competitor_scores.append({
-                    "domain": comp,
-                    "visibility_score": 50 + (hash(comp) % 40)
-                })
+        for comp in competitors[:5]:
+            competitor_scores.append({
+                "domain": comp,
+                "visibility_score": 50 + (hash(comp) % 40)
+            })
         
         ranking_data = self.competitor_service.rank_competitors(
             domain,
@@ -606,9 +737,10 @@ class AsIsStateService:
             "your_rank": ranking_data["user_rank"],
             "total_competitors": ranking_data["total_competitors"],
             "your_visibility_score": ranking_data["user_visibility_score"],
-            "rankings": ranking_data["rankings"][:5],  # Top 5 for card
+            "rankings": ranking_data["rankings"][:5],
             "empty_state": False
         }
+    
     
     async def get_parameters(
         self,
