@@ -493,18 +493,39 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
                     validation_results["errors"].append("GA4: No properties found")
                     logger.warning("✗ GA4 validation: No properties accessible")
                 else:
-                    # Strict Validation: Check if any property has a data stream matching the target URL
+                    # Enhanced Validation: Check if any property has a data stream matching the target URL
+                    # Handle variations: www., https://, http://, trailing slashes, partial matches
                     matched_stream = None
-                    target_clean = request.target_url.replace('https://', '').replace('http://', '').replace('www.', '').strip('/')
+                    
+                    # Normalize target URL
+                    target_clean = request.target_url.replace('https://', '').replace('http://', '').replace('www.', '').strip('/').lower()
+                    
+                    # Extract base domain (e.g., "ursdigitally.com" from "blog.ursdigitally.com")
+                    target_parts = target_clean.split('.')
+                    if len(target_parts) >= 2:
+                        target_base = '.'.join(target_parts[-2:])  # Get last 2 parts (domain.tld)
+                    else:
+                        target_base = target_clean
                     
                     for prop in properties:
                         streams = connector.list_data_streams(prop['resource_name'])
                         for stream in streams:
                             stream_uri = stream.get('default_uri', '')
                             if stream_uri:
-                                stream_clean = stream_uri.replace('https://', '').replace('http://', '').replace('www.', '').strip('/')
-                                if target_clean == stream_clean:
+                                # Normalize stream URI
+                                stream_clean = stream_uri.replace('https://', '').replace('http://', '').replace('www.', '').strip('/').lower()
+                                
+                                # Extract base domain from stream
+                                stream_parts = stream_clean.split('.')
+                                if len(stream_parts) >= 2:
+                                    stream_base = '.'.join(stream_parts[-2:])
+                                else:
+                                    stream_base = stream_clean
+                                
+                                # Match: exact match OR base domain match
+                                if target_clean == stream_clean or target_base == stream_base or target_clean in stream_clean or stream_clean in target_clean:
                                     matched_stream = stream
+                                    logger.info(f"✓ GA4 match found: {stream_uri} matches {request.target_url}")
                                     break
                         if matched_stream:
                             break
@@ -515,6 +536,8 @@ async def validate_gsc_ga4_connection(request: Page2GSCRequest) -> StandardRespo
                     else:
                         validation_results["errors"].append(f"GA4: No property found for {request.target_url}")
                         logger.warning(f"✗ GA4 validation: No matching stream for {request.target_url}")
+                        logger.warning(f"   Available properties: {[p.get('display_name', 'N/A') for p in properties]}")
+                    
                     
             except Exception as e:
                 validation_results["errors"].append(f"GA4 Error: {str(e)}")
@@ -1035,18 +1058,21 @@ async def submit_keywords_get_competitors(request: Page6KeywordsRequest) -> Page
                 detail="Google Custom Search not configured"
             )
         
-        # Load profile for location
+        # Load profile for location and website
         profile = pm.get_profile(request.user_id)
+        user_website = profile.get("website_url", "")
         
-        # Run competitor analysis
+        # Run competitor analysis with business similarity validation
         competitor_result = await analyze_competitors(
             keywords=final_keywords,
             google_cse_api_key=google_cse_api_key,
             google_cse_cx=google_cse_cx,
+            user_url=user_website if user_website else None,
             top_results_per_keyword=10,
             final_top_competitors=10,
             location=profile.get("location_scope", "India"),
-            language="en"
+            language="en",
+            min_similarity=0.10  # 10% similarity threshold
         )
         
         # Save suggested competitors to profile (not final, just suggestions)
@@ -1222,15 +1248,20 @@ async def analyze_competitors_endpoint(user_id: str) -> StandardResponse:
                 detail="Google Custom Search not configured"
             )
         
-        # Run competitor analysis
+        # Get user website from profile
+        user_website = profile.get("website_url", "")
+        
+        # Run competitor analysis with business similarity validation
         result = await analyze_competitors(
             keywords=selected_keywords,
             google_cse_api_key=google_cse_api_key,
             google_cse_cx=google_cse_cx,
+            user_url=user_website if user_website else None,
             top_results_per_keyword=10,
             final_top_competitors=10,
             location=profile.get("location_scope", "India"),
-            language="en"
+            language="en",
+            min_similarity=0.10  # 10% similarity threshold
         )
         
         # Save competitor analysis results to profile

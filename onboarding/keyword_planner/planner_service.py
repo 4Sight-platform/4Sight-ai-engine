@@ -487,11 +487,11 @@ class KeywordPlannerService:
         Finalize keyword selection and lock universe.
         
         Rules:
-        - Must select 10-15 keywords
+        - Can select 1-20 keywords (flexible based on what's generated)
         - Locks for 90 days
         """
-        if not (10 <= len(selected_ids) <= 15):
-            raise ValueError("Must select between 10 and 15 keywords")
+        if not (1 <= len(selected_ids) <= 20):
+            raise ValueError("Must select between 1 and 20 keywords")
         
         universe = self.db.query(KeywordUniverse).filter(
             KeywordUniverse.user_id == user_id
