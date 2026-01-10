@@ -238,11 +238,13 @@ class GoalSettingService:
     
     def _get_current_metrics(self, user_id: str, asis_summary: Dict[str, Any] = None) -> Dict[str, str]:
         """
-        Get current metric values from AS-IS data.
+        Get current metric values using DB-FIRST approach.
         
         Priority order:
-        1. Live AS-IS summary data (passed from API endpoint)
-        2. Defaults to "0"/empty if live data is not available (NO CACHING as per user request)
+        1. If keyword universe is LOCKED: Return baseline values from as_is_summary_cache
+        2. Check as_is_summary_cache for recent data (within 90 days)
+        3. If not found or stale: Use live AS-IS summary passed from API
+        4. Defaults to "0" if nothing available
         
         Args:
             user_id: User ID
@@ -251,203 +253,164 @@ class GoalSettingService:
         Returns:
             Dict mapping goal_type to current value
         """
+        from Database.models import KeywordUniverse, AsIsSummaryCache
+        from datetime import datetime, date
+        
+        MAX_CACHE_AGE_DAYS = 90
         metrics = {}
+        sync_source = "unknown"
         
         try:
+            # === STEP 1: Check if keyword universe is LOCKED ===
+            keyword_universe = self.db.query(KeywordUniverse).filter(
+                KeywordUniverse.user_id == user_id
+            ).first()
+            
+            is_locked = False
+            if keyword_universe and keyword_universe.is_locked:
+                if keyword_universe.locked_until and keyword_universe.locked_until >= date.today():
+                    is_locked = True
+            
+            if is_locked:
+                # === LOCKED: Read from baseline fields ===
+                logger.info(f"[Goal Setting] 🔒 Keyword Universe is LOCKED - reading from baseline data")
+                
+                cache = self.db.query(AsIsSummaryCache).filter(
+                    AsIsSummaryCache.user_id == user_id
+                ).first()
+                
+                if cache and cache.baseline_captured_at:
+                    metrics["organic-traffic"] = str(cache.baseline_total_clicks or 0)
+                    metrics["avg-position"] = f"#{cache.baseline_avg_position:.1f}" if cache.baseline_avg_position else "#0"
+                    metrics["impressions"] = str(cache.baseline_total_impressions or 0)
+                    metrics["keyword-rankings"] = str(cache.baseline_top10_keywords or 0)
+                    metrics["serp-features"] = str(cache.baseline_features_count or 0)
+                    metrics["domain-authority"] = str(cache.baseline_domain_authority or 0)
+                    metrics["serp-features-breakdown"] = []
+                    sync_source = "baseline"
+                    logger.info(f"[Goal Setting] ✅ Baseline metrics loaded: {metrics}")
+                    return metrics
+                else:
+                    logger.warning(f"[Goal Setting] ⚠️ Locked but no baseline data found")
+            
+            # === STEP 2: Check as_is_summary_cache for recent data ===
+            logger.info(f"[Goal Setting] 🔍 Checking database for recent metrics...")
+            
+            cache = self.db.query(AsIsSummaryCache).filter(
+                AsIsSummaryCache.user_id == user_id
+            ).first()
+            
+            if cache and cache.last_updated:
+                cache_age = (datetime.now() - cache.last_updated).days
+                
+                if cache_age <= MAX_CACHE_AGE_DAYS:
+                    logger.info(f"[Goal Setting] ✅ Found data in DB! Age: {cache_age} days.")
+                    
+                    metrics["organic-traffic"] = str(cache.total_clicks or 0)
+                    metrics["avg-position"] = f"#{cache.avg_position:.1f}" if cache.avg_position else "#0"
+                    metrics["impressions"] = str(cache.total_impressions or 0)
+                    metrics["keyword-rankings"] = str(cache.top10_keywords or 0)
+                    metrics["serp-features"] = str(cache.features_count or 0)
+                    metrics["domain-authority"] = str(cache.domain_authority or 0)
+                    metrics["serp-features-breakdown"] = []
+                    sync_source = "database"
+                    
+                    logger.info(f"[Goal Setting] Metrics from DB: {metrics}")
+                    return metrics
+                else:
+                    logger.info(f"[Goal Setting] ⚠️ Cache is {cache_age} days old (stale)")
+            else:
+                logger.info(f"[Goal Setting] ⚠️ No cached data found in database")
+            
+            # === STEP 3: Use live AS-IS summary if provided ===
             if asis_summary:
-                # Priority 1: Parse live AS-IS summary data (real-time!)
-                logger.info(f"[Goal Setting] Using LIVE AS-IS data for user {user_id}")
+                logger.info(f"[Goal Setting] 🔄 Using live AS-IS data passed from API")
                 
                 traffic = asis_summary.get("organic_traffic", {})
                 keywords = asis_summary.get("keywords_performance", {})
                 serp = asis_summary.get("serp_features", {})
                 
-                # Organic Traffic (from clicks) - EXACT value from As-Is State
                 metrics["organic-traffic"] = str(traffic.get("total_clicks", 0))
-                
-                # Average Position - EXACT value from As-Is State
                 avg_pos = keywords.get("avg_position", 0)
                 metrics["avg-position"] = f"#{avg_pos:.1f}" if avg_pos else "#0"
-                
-                # Impressions - EXACT value from As-Is State
                 metrics["impressions"] = str(traffic.get("total_impressions", 0))
-                
-                # Keyword Rankings (top 10 keywords count) - EXACT value from As-Is State
                 metrics["keyword-rankings"] = str(keywords.get("top10_keywords", 0))
+                metrics["serp-features"] = str(serp.get("features_count", 0))
                 
-                # =====================================================
-                # SERP Features - FETCH DIRECTLY FROM SERPER.DEV API
-                # BRD Section 2.2: 6 feature types, OR condition across keywords
-                # =====================================================
-                import os
-                import httpx
-                from urllib.parse import urlparse
+                # Domain Authority - check if already in summary, otherwise fetch from Moz
+                da = asis_summary.get("domain_authority")
+                if da is None:
+                    da = self._fetch_domain_authority_from_moz(asis_summary.get("site_url", ""))
+                metrics["domain-authority"] = str(da)
+                metrics["serp-features-breakdown"] = serp.get("features_present", [])
                 
-                serper_api_key = os.getenv("SERPER_API_KEY")
-                site_url = asis_summary.get("site_url", "")
-                
-                # Extract domain from site_url
-                domain = ""
-                if site_url:
-                    parsed = urlparse(site_url)
-                    domain = parsed.netloc.replace("www.", "")
-                
-                serp_features_count = 0
-                serp_features_breakdown = []
-                
-                # Track which feature TYPES are active (OR condition per BRD)
-                active_features = {
-                    "featured_snippet": False,
-                    "knowledge_panel": False,
-                    "local_pack": False,
-                    "image_pack": False,
-                    "video_carousel": False,
-                    "people_also_ask": False
-                }
-                
-                if serper_api_key and domain:
-                    logger.info(f"[Goal Setting] Fetching SERP features from Serper.dev for {domain}")
-                    
-                    # Get tracked keywords
-                    tracked_keywords = []
-                    ranked_keywords = keywords.get("ranked_keywords", [])
-                    if ranked_keywords:
-                        tracked_keywords = [kw.get("keyword", "") for kw in ranked_keywords if kw.get("keyword")]
-                    
-                    if not tracked_keywords:
-                        tracked_keywords = [domain.split('.')[0]]
-                    
-                    logger.info(f"[Goal Setting] Checking {len(tracked_keywords)} keywords for SERP features")
-                    
-                    try:
-                        for keyword in tracked_keywords[:10]:  # Check up to 10 keywords
-                            try:
-                                with httpx.Client(timeout=15.0) as client:
-                                    resp = client.post(
-                                        "https://google.serper.dev/search",
-                                        json={"q": keyword, "gl": "us", "hl": "en"},
-                                        headers={"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
-                                    )
-                                    if resp.status_code == 200:
-                                        data = resp.json()
-                                        domain_clean = domain.lower()
-                                        
-                                        # 1. Featured Snippet
-                                        if not active_features["featured_snippet"]:
-                                            ab = data.get("answerBox", {})
-                                            if ab and domain_clean in ab.get("link", "").lower():
-                                                active_features["featured_snippet"] = True
-                                                serp_features_breakdown.append({"type": "Featured Snippet", "keyword": keyword})
-                                        
-                                        # 2. People Also Ask
-                                        if not active_features["people_also_ask"]:
-                                            for item in data.get("peopleAlsoAsk", []):
-                                                if domain_clean in item.get("link", "").lower():
-                                                    active_features["people_also_ask"] = True
-                                                    serp_features_breakdown.append({"type": "People Also Ask", "keyword": keyword})
-                                                    break
-                                        
-                                        # 3. Image Pack
-                                        if not active_features["image_pack"]:
-                                            for img in data.get("images", []):
-                                                if domain_clean in (img.get("link", "") or img.get("source", "")).lower():
-                                                    active_features["image_pack"] = True
-                                                    serp_features_breakdown.append({"type": "Image Pack", "keyword": keyword})
-                                                    break
-                                        
-                                        # 4. Video Carousel
-                                        if not active_features["video_carousel"]:
-                                            for vid in data.get("videos", []):
-                                                if domain_clean in vid.get("link", "").lower():
-                                                    active_features["video_carousel"] = True
-                                                    serp_features_breakdown.append({"type": "Video Carousel", "keyword": keyword})
-                                                    break
-                                        
-                                        # 5. Knowledge Panel
-                                        if not active_features["knowledge_panel"]:
-                                            kg = data.get("knowledgeGraph", {})
-                                            if kg and domain_clean in (kg.get("website", "") or kg.get("link", "")).lower():
-                                                active_features["knowledge_panel"] = True
-                                                serp_features_breakdown.append({"type": "Knowledge Panel", "keyword": keyword})
-                                        
-                                        # 6. Local Pack
-                                        if not active_features["local_pack"]:
-                                            for place in data.get("places", []):
-                                                if domain_clean in (place.get("website", "") or place.get("link", "")).lower():
-                                                    active_features["local_pack"] = True
-                                                    serp_features_breakdown.append({"type": "Local Pack", "keyword": keyword})
-                                                    break
-                                        
-                                        # Early exit if all 6 found
-                                        if all(active_features.values()):
-                                            break
-                            except Exception as kw_err:
-                                logger.error(f"[Goal Setting] Error checking keyword '{keyword}': {kw_err}")
-                        
-                        serp_features_count = sum(1 for v in active_features.values() if v)
-                        logger.info(f"[Goal Setting] SERP Features Active: {serp_features_count}/6")
-                    except Exception as serp_err:
-                        logger.error(f"[Goal Setting] SERP API error: {serp_err}")
-                
-                metrics["serp-features"] = str(serp_features_count)
-                metrics["serp-features-breakdown"] = serp_features_breakdown
-                
-                # =====================================================
-                # Domain Authority - FETCH DIRECTLY FROM MOZ API
-                # =====================================================
-                moz_access_id = os.getenv("MOZ_ACCESS_ID")
-                moz_secret_key = os.getenv("MOZ_SECRET_KEY")
-                da_score = 0
-                
-                if moz_access_id and moz_secret_key and domain:
-                    logger.info(f"[Goal Setting] Fetching Domain Authority from Moz for {domain}")
-                    try:
-                        import base64
-                        credentials = f"{moz_access_id}:{moz_secret_key}"
-                        encoded = base64.b64encode(credentials.encode()).decode()
-                        
-                        with httpx.Client(timeout=15.0) as client:
-                            resp = client.post(
-                                "https://lsapi.seomoz.com/v2/url_metrics",
-                                json={"targets": [domain]},
-                                headers={"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
-                            )
-                            if resp.status_code == 200:
-                                results = resp.json().get("results", [])
-                                if results:
-                                    da_score = int(results[0].get("domain_authority", 0))
-                                    logger.info(f"[Goal Setting] Moz returned DA={da_score}")
-                    except Exception as moz_err:
-                        logger.error(f"[Goal Setting] Moz API error: {moz_err}")
-                
-                metrics["domain-authority"] = str(da_score)
-                
-                logger.info(f"[Goal Setting] LIVE metrics for user {user_id}: {metrics}")
-                
-            else:
-                # NO CACHING FALLBACK (User Request)
-                logger.warning(f"[Goal Setting] No live AS-IS data provided for user {user_id}. Returning empty metrics.")
-                metrics["organic-traffic"] = "0"
-                metrics["impressions"] = "0"
-                metrics["avg-position"] = "#0"
-                metrics["keyword-rankings"] = "0"
-                metrics["serp-features"] = "0"
-                metrics["domain-authority"] = "0"
+                sync_source = "api"
+                logger.info(f"[Goal Setting] LIVE metrics: {metrics}")
+                return metrics
             
-            logger.info(f"Current metrics for user {user_id}: {metrics}")
+            # === STEP 4: Default values ===
+            logger.warning(f"[Goal Setting] No data available for user {user_id}. Using defaults.")
+            metrics["organic-traffic"] = "0"
+            metrics["impressions"] = "0"
+            metrics["avg-position"] = "#0"
+            metrics["keyword-rankings"] = "0"
+            metrics["serp-features"] = "0"
+            metrics["domain-authority"] = "0"
+            metrics["serp-features-breakdown"] = []
+            
             return metrics
             
         except Exception as e:
             logger.error(f"Error getting current metrics for user {user_id}: {str(e)}")
-            # Return default values
             return {
                 "organic-traffic": "0",
                 "keyword-rankings": "0",
                 "serp-features": "0",
                 "avg-position": "#0",
                 "impressions": "0",
-                "domain-authority": "0"
+                "domain-authority": "0",
+                "serp-features-breakdown": []
             }
+    
+    def _fetch_domain_authority_from_moz(self, site_url: str) -> int:
+        """Fetch Domain Authority from Moz API"""
+        import os
+        import httpx
+        import base64
+        from urllib.parse import urlparse
+        
+        if not site_url:
+            return 0
+        
+        parsed = urlparse(site_url)
+        domain = parsed.netloc.replace("www.", "")
+        
+        moz_access_id = os.getenv("MOZ_ACCESS_ID")
+        moz_secret_key = os.getenv("MOZ_SECRET_KEY")
+        
+        if not moz_access_id or not moz_secret_key or not domain:
+            return 0
+        
+        try:
+            credentials = f"{moz_access_id}:{moz_secret_key}"
+            encoded = base64.b64encode(credentials.encode()).decode()
+            
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.post(
+                    "https://lsapi.seomoz.com/v2/url_metrics",
+                    json={"targets": [domain]},
+                    headers={"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    if results:
+                        da = int(results[0].get("domain_authority", 0))
+                        logger.info(f"[Goal Setting] Moz returned DA={da}")
+                        return da
+        except Exception as e:
+            logger.error(f"[Goal Setting] Moz API error: {e}")
+        
+        return 0
     
     def get_user_goals(self, user_id: str, asis_summary: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """

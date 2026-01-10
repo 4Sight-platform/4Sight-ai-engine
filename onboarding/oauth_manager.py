@@ -122,9 +122,10 @@ class OAuthManager:
             logger.info("[OAuth] ✓ Successfully exchanged code for tokens")
             return token_data
     
+    
     def store_tokens(self, user_id: str, token_data: Dict[str, str]) -> None:
         """
-        Encrypt and store refresh token for the user.
+        Encrypt and store refresh token for the user in DATABASE.
         Access token is NOT stored (returned directly to frontend for immediate use).
         
         Args:
@@ -136,27 +137,46 @@ class OAuthManager:
         if not refresh_token:
             logger.warning("[OAuth] No refresh_token in response. User may have already authorized.")
             # This can happen if user already granted access before
-            # In production, you'd want to handle this case
+            # We don't overwrite existing token if not provided
+            return
         
         # Encrypt refresh token
         encrypted_refresh = self.cipher.encrypt(refresh_token.encode()).decode()
         
-        # Load existing storage
-        storage = self._load_storage()
-        
-        # Store encrypted token
-        storage[user_id] = {
-            "encrypted_refresh_token": encrypted_refresh,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_used_at": None
-        }
-        
-        self._save_storage(storage)
-        logger.info(f"[OAuth] ✓ Stored encrypted refresh token for user: {user_id}")
+        try:
+            from Database.database import get_db
+            from Database.models import OAuthToken
+            
+            db = next(get_db())
+            
+            # Check existing
+            existing = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).first()
+            
+            if existing:
+                existing.encrypted_refresh_token = encrypted_refresh
+                existing.last_refreshed_at = datetime.utcnow()
+                logger.info(f"[OAuth] Updated existing token for user: {user_id}")
+            else:
+                new_token = OAuthToken(
+                    user_id=user_id,
+                    encrypted_refresh_token=encrypted_refresh,
+                    provider='google',
+                    token_created_at=datetime.utcnow(),
+                    last_refreshed_at=datetime.utcnow()
+                )
+                db.add(new_token)
+                logger.info(f"[OAuth] Stored new token for user: {user_id}")
+            
+            db.commit()
+            db.close()
+            
+        except Exception as e:
+            logger.error(f"[OAuth] Failed to store token in DB: {e}")
+            raise e
     
     def get_refresh_token(self, user_id: str) -> Optional[str]:
         """
-        Retrieve and decrypt refresh token for a user.
+        Retrieve and decrypt refresh token for a user from DATABASE.
         
         Args:
             user_id: User identifier
@@ -164,25 +184,40 @@ class OAuthManager:
         Returns:
             Decrypted refresh token or None
         """
-        storage = self._load_storage()
-        
-        if user_id not in storage:
-            return None
-        
-        encrypted_token = storage[user_id].get("encrypted_refresh_token")
-        if not encrypted_token:
-            return None
-        
         try:
+            from Database.database import get_db
+            from Database.models import OAuthToken
+            
+            db = next(get_db())
+            token_record = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).first()
+            
+            if not token_record:
+                db.close()
+                return None
+            
+            encrypted_token = token_record.encrypted_refresh_token
+            db.close()
+            
+            if not encrypted_token:
+                return None
+            
             decrypted = self.cipher.decrypt(encrypted_token.encode()).decode()
             
-            # Update last_used_at
-            storage[user_id]["last_used_at"] = datetime.utcnow().isoformat()
-            self._save_storage(storage)
-            
+            # Update last_refreshed_at (best effort)
+            try:
+                db = next(get_db())
+                token = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).first()
+                if token:
+                    token.last_refreshed_at = datetime.utcnow()
+                    db.commit()
+                db.close()
+            except:
+                pass
+                
             return decrypted
+            
         except Exception as e:
-            logger.error(f"[OAuth] Failed to decrypt token: {e}")
+            logger.error(f"[OAuth] Failed to retrieve/decrypt token: {e}")
             return None
     
     async def refresh_access_token(self, user_id: str) -> Optional[str]:
@@ -243,7 +278,7 @@ class OAuthManager:
 
     def has_valid_credentials(self, user_id: str) -> bool:
         """
-        Check if user has stored credentials.
+        Check if user has stored credentials in DATABASE.
         
         Args:
             user_id: User identifier
@@ -251,21 +286,36 @@ class OAuthManager:
         Returns:
             True if user has refresh token stored
         """
-        storage = self._load_storage()
-        return user_id in storage and "encrypted_refresh_token" in storage[user_id]
+        try:
+            from Database.database import get_db
+            from Database.models import OAuthToken
+            
+            db = next(get_db())
+            exists = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).count() > 0
+            db.close()
+            return exists
+        except Exception as e:
+            logger.error(f"[OAuth] DB check failed: {e}")
+            return False
     
     def revoke_tokens(self, user_id: str) -> None:
         """
-        Remove stored credentials for a user.
+        Remove stored credentials for a user from DATABASE.
         
         Args:
             user_id: User identifier
         """
-        storage = self._load_storage()
-        if user_id in storage:
-            del storage[user_id]
-            self._save_storage(storage)
+        try:
+            from Database.database import get_db
+            from Database.models import OAuthToken
+            
+            db = next(get_db())
+            db.query(OAuthToken).filter(OAuthToken.user_id == user_id).delete()
+            db.commit()
+            db.close()
             logger.info(f"[OAuth] Revoked credentials for user: {user_id}")
+        except Exception as e:
+            logger.error(f"[OAuth] Failed to revoke token: {e}")
     
     # Private helper methods
     

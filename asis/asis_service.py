@@ -65,10 +65,21 @@ class AsIsStateService:
         access_token: str,
         site_url: str,
         tracked_keywords: List[str] = None,
-        competitors: List[str] = None
+        competitors: List[str] = None,
+        force_refresh: bool = False,
+        skip_cache: bool = False
     ) -> Dict[str, Any]:
         """
         Get AS-IS summary data for the four top cards.
+        
+        DB-FIRST APPROACH:
+        1. Check database for cached data within 3 months
+        2. If found, return cached data (no API calls)
+        3. If not found or older than 3 months, fetch live data and save
+        
+        Args:
+            force_refresh: If True, bypasses cache and fetches live data
+            skip_cache: If True, completely skips DB cache (for debugging)
         
         Returns:
             Dict with card data for:
@@ -77,6 +88,101 @@ class AsIsStateService:
             - SERP Features
             - Competitor Rank
         """
+        MAX_CACHE_AGE_DAYS = 90  # 3 months
+        
+        # === STEP 1: Check DB for recent cached data ===
+        if skip_cache:
+            logger.info(f"[AS-IS] ⚠️ skip_cache=True - bypassing DB, fetching live data")
+        else:
+            logger.info(f"[AS-IS] 🔍 Checking database for cached summary... (user: {user_id})")
+        
+        if not force_refresh and not skip_cache:
+            try:
+                db = next(get_db())
+                cache = db.query(AsIsSummaryCache).filter(
+                    AsIsSummaryCache.user_id == user_id
+                ).first()
+                
+                if cache and cache.last_updated:
+                    cache_age = (datetime.now() - cache.last_updated).days
+                    
+                    if cache_age <= MAX_CACHE_AGE_DAYS:
+                        logger.info(f"[AS-IS] ✅ Found data in DB! Age: {cache_age} days. Returning cached summary.")
+                        
+                        # === Use full_summary JSONB if available (complete data) ===
+                        if cache.full_summary:
+                            cached_summary = dict(cache.full_summary)
+                            cached_summary["from_cache"] = True
+                            cached_summary["sync_source"] = "database"
+                            last_synced_str = cache.last_updated.strftime("%b %d, %Y at %H:%M") if cache.last_updated else "Unknown"
+                            cached_summary["sync_message"] = f"Data loaded from database (last synced: {last_synced_str})"
+                            cached_summary["cache_age_days"] = cache_age
+                            cached_summary["last_updated"] = cache.last_updated.isoformat() if cache.last_updated else None
+                            db.close()
+                            return cached_summary
+                        
+                        # === Fallback: Build from individual fields (legacy) ===
+                        import json
+                        features_present = []
+                        if cache.features_present:
+                            try:
+                                features_present = json.loads(cache.features_present)
+                            except:
+                                features_present = []
+                        
+                        cached_summary = {
+                            "organic_traffic": {
+                                "total_clicks": cache.total_clicks or 0,
+                                "clicks_change": cache.clicks_change or 0,
+                                "clicks_change_direction": "up" if (cache.clicks_change or 0) > 0 else "down" if (cache.clicks_change or 0) < 0 else "neutral",
+                                "total_impressions": cache.total_impressions or 0,
+                                "impressions_change": cache.impressions_change or 0,
+                                "impressions_change_direction": "up" if (cache.impressions_change or 0) > 0 else "down" if (cache.impressions_change or 0) < 0 else "neutral",
+                                "top_pages": cache.top_pages or [],
+                                "data_available": True
+                            },
+                            "keywords_performance": {
+                                "avg_position": cache.avg_position or 0,
+                                "position_change": cache.position_change or 0,
+                                "position_change_direction": "up" if (cache.position_change or 0) > 0 else "down" if (cache.position_change or 0) < 0 else "neutral",
+                                "top10_keywords": cache.top10_keywords or 0,
+                                "top10_change": cache.top10_change or 0,
+                                "ranked_keywords": cache.ranked_keywords or [],
+                                "data_available": True
+                            },
+                            "serp_features": cache.serp_features_detail or {
+                                "features_count": cache.features_count or 0,
+                                "features_present": features_present,
+                                "data_available": True
+                            },
+                            "competitor_rank": {
+                                "your_rank": cache.your_rank,
+                                "total_competitors": cache.total_competitors or 0,
+                                "your_visibility_score": cache.your_visibility_score or 0,
+                                "rankings": cache.competitor_rankings or [],
+                                "data_available": cache.your_rank is not None
+                            },
+                            "last_updated": cache.last_updated.isoformat() if cache.last_updated else None,
+                            "from_cache": True,
+                            "sync_source": "database",
+                            "sync_message": f"Data loaded from database (last synced: {cache.last_updated.strftime('%b %d, %Y at %H:%M') if cache.last_updated else 'Unknown'})",
+                            "cache_age_days": cache_age
+                        }
+                        db.close()
+                        return cached_summary
+                    else:
+                        logger.info(f"[AS-IS] ⚠️ No recent data in DB! Cache is {cache_age} days old (older than {MAX_CACHE_AGE_DAYS} days)")
+                else:
+                    logger.info(f"[AS-IS] ⚠️ No data found in database for user {user_id}")
+                db.close()
+            except Exception as e:
+                logger.warning(f"[AS-IS] Error checking database: {e}")
+        else:
+            logger.info(f"[AS-IS] Force refresh requested - skipping DB check")
+        
+        # === STEP 2: Fetch live data from APIs ===
+        logger.info(f"[AS-IS] 🔄 Syncing data from APIs... (no recent data in DB)")
+        
         # Initialize services
         gsc_service = GSCDataService(access_token)
         
@@ -109,6 +215,36 @@ class AsIsStateService:
             except Exception as e:
                 logger.error(f"[AS-IS] Error fetching SERP data: {str(e)}")
         
+        # Fetch Domain Authority from Moz API
+        domain_authority = 0
+        try:
+            import os
+            import httpx
+            import base64
+            
+            moz_access_id = os.getenv("MOZ_ACCESS_ID")
+            moz_secret_key = os.getenv("MOZ_SECRET_KEY")
+            domain = urlparse(site_url).netloc.replace("www.", "") if site_url else ""
+            
+            if moz_access_id and moz_secret_key and domain:
+                logger.info(f"[AS-IS] Fetching Domain Authority from Moz for {domain}")
+                credentials = f"{moz_access_id}:{moz_secret_key}"
+                encoded = base64.b64encode(credentials.encode()).decode()
+                
+                with httpx.Client(timeout=15.0) as client:
+                    resp = client.post(
+                        "https://lsapi.seomoz.com/v2/url_metrics",
+                        json={"targets": [domain]},
+                        headers={"Authorization": f"Basic {encoded}", "Content-Type": "application/json"}
+                    )
+                    if resp.status_code == 200:
+                        results = resp.json().get("results", [])
+                        if results:
+                            domain_authority = int(results[0].get("domain_authority", 0))
+                            logger.info(f"[AS-IS] Moz returned DA={domain_authority}")
+        except Exception as e:
+            logger.error(f"[AS-IS] Error fetching Domain Authority: {str(e)}")
+        
         # Build summary
         summary = {
             "organic_traffic": self._build_traffic_card(gsc_data),
@@ -117,21 +253,27 @@ class AsIsStateService:
             "competitor_rank": self._build_competitor_card(
                 site_url, tracked_keywords, competitors, gsc_data, serp_analysis
             ),
-            "last_updated": datetime.now().isoformat()
+            "domain_authority": domain_authority,
+            "last_updated": datetime.now().isoformat(),
+            "from_cache": False,
+            "sync_source": "api",
+            "sync_message": "Data synced from live APIs (GSC, SERP, Moz)"
         }
         
-        # Save to DB cache for Goal Setting service to use
-        # Cache disabled to prevent errors due to schema mismatch
-        # try:
-        #     self._save_summary_to_cache(user_id, summary)
-        # except Exception as e:
-        #     logger.error(f"[AS-IS] Error saving summary to cache: {e}")
+        # === STEP 3: Save to DB cache ===
+        logger.info(f"[AS-IS] 💾 Saving synced data to database...")
+        try:
+            self._save_summary_to_cache(user_id, summary)
+            logger.info(f"[AS-IS] ✅ Data saved to database successfully!")
+        except Exception as e:
+            logger.error(f"[AS-IS] Error saving summary to cache: {e}")
 
         return summary
     
     def _save_summary_to_cache(self, user_id: str, summary: Dict[str, Any]):
-        """Save summary data to AsIsSummaryCache table"""
+        """Save summary data to AsIsSummaryCache table including full JSONB"""
         try:
+            import json
             db = next(get_db())
             
             # Check for existing cache
@@ -152,16 +294,10 @@ class AsIsStateService:
             serp = summary.get("serp_features", {})
             comp = summary.get("competitor_rank", {})
             
-            # Extract values for logging (before close)
-            saved_clicks = traffic.get("total_clicks", 0)
-            saved_impressions = traffic.get("total_impressions", 0)
-            
-            # Log the values being saved
-            logger.info(f"[AS-IS] Saving to cache - total_clicks: {saved_clicks}, total_impressions: {saved_impressions}")
-            
-            cache.total_clicks = saved_clicks
+            # === Store aggregate values (for quick queries) ===
+            cache.total_clicks = traffic.get("total_clicks", 0)
             cache.clicks_change = traffic.get("clicks_change", 0)
-            cache.total_impressions = saved_impressions
+            cache.total_impressions = traffic.get("total_impressions", 0)
             cache.impressions_change = traffic.get("impressions_change", 0)
             
             cache.avg_position = keywords.get("avg_position", 0)
@@ -170,17 +306,32 @@ class AsIsStateService:
             cache.top10_change = keywords.get("top10_change", 0)
             
             cache.features_count = serp.get("features_count", 0)
-            # features_present is stored as JSON text
-            import json
             cache.features_present = json.dumps(serp.get("features_present", []))
             
             cache.your_rank = comp.get("your_rank")
             cache.total_competitors = comp.get("total_competitors", 0)
             cache.your_visibility_score = comp.get("your_visibility_score", 0)
             
+            # === Store complete data as JSONB (for full restore) ===
+            # Remove 'from_cache' flag before storing
+            summary_to_store = {k: v for k, v in summary.items() if k != 'from_cache'}
+            cache.full_summary = summary_to_store
+            
+            # Store detailed lists separately for flexibility
+            cache.ranked_keywords = keywords.get("ranked_keywords", [])
+            cache.top_pages = traffic.get("top_pages", [])
+            cache.competitor_rankings = comp.get("rankings", [])
+            cache.serp_features_detail = serp
+            
+            # Domain Authority (for Goal Setting)
+            cache.domain_authority = summary.get("domain_authority", 0)
+            
+            # Update timestamp
+            cache.last_updated = datetime.now()
+            
             db.commit()
             db.close()
-            logger.info(f"[AS-IS] Successfully saved summary cache for user {user_id}: clicks={saved_clicks}, impressions={saved_impressions}")
+            logger.info(f"[AS-IS] Successfully saved full summary cache for user {user_id}")
             
         except Exception as e:
             logger.error(f"[AS-IS] DB Error in save_summary_to_cache: {e}", exc_info=True)
@@ -467,10 +618,16 @@ class AsIsStateService:
         priority_urls: List[str] = None,
         tab: str = "onpage",
         status_filter: str = None,
-        tracked_keywords: List[str] = None
+        tracked_keywords: List[str] = None,
+        force_refresh: bool = False
     ) -> Dict[str, Any]:
         """
         Get AS-IS parameter scores for a specific tab.
+        
+        DB-FIRST APPROACH:
+        1. Check database for cached scores within 3 months
+        2. If found, return cached data (no API calls)
+        3. If not found or older than 3 months, fetch live data and save
         
         Args:
             user_id: User ID
@@ -479,10 +636,95 @@ class AsIsStateService:
             priority_urls: URLs to crawl (from onboarding)
             tab: 'onpage', 'offpage', or 'technical'
             status_filter: 'optimal' or 'needs_attention' (None = all)
+            force_refresh: If True, bypasses cache and fetches live data
             
         Returns:
             Dict with parameter scores and statuses
         """
+        import json
+        MAX_CACHE_AGE_DAYS = 90  # 3 months
+        
+        # === STEP 1: Check DB for recent cached scores ===
+        logger.info(f"[AS-IS] 🔍 Checking database for {tab} scores... (user: {user_id})")
+        
+        if not force_refresh:
+            try:
+                db = next(get_db())
+                
+                # Get the most recent scores for this user/tab
+                recent_scores = db.query(AsIsScore).filter(
+                    AsIsScore.user_id == user_id,
+                    AsIsScore.parameter_tab == tab
+                ).order_by(AsIsScore.snapshot_date.desc()).first()
+                
+                if recent_scores and recent_scores.snapshot_date:
+                    cache_age = (date.today() - recent_scores.snapshot_date).days
+                    
+                    if cache_age <= MAX_CACHE_AGE_DAYS:
+                        logger.info(f"[AS-IS] ✅ Found {tab} data in DB! Age: {cache_age} days. Returning cached scores.")
+                        
+                        # Fetch all scores for this tab
+                        all_scores = db.query(AsIsScore).filter(
+                            AsIsScore.user_id == user_id,
+                            AsIsScore.parameter_tab == tab
+                        ).all()
+                        
+                        # Build parameters from cached scores
+                        parameters = []
+                        for score in all_scores:
+                            param_data = {
+                                "group_id": score.parameter_group,
+                                "name": score.parameter_group,
+                                "score": score.score or 0,
+                                "status": score.status or "needs_attention",
+                                "tab": score.parameter_tab
+                            }
+                            # Add details if available
+                            if score.details:
+                                try:
+                                    details = json.loads(score.details)
+                                    param_data.update(details)
+                                except:
+                                    pass
+                            parameters.append(param_data)
+                        
+                        db.close()
+                        
+                        # Apply status filter
+                        if status_filter:
+                            parameters = [p for p in parameters if p["status"] == status_filter]
+                        
+                        # Calculate summary stats
+                        total = len(parameters)
+                        optimal_count = len([p for p in parameters if p["status"] == "optimal"])
+                        needs_attention_count = len([p for p in parameters if p["status"] == "needs_attention"])
+                        
+                        return {
+                            "tab": tab,
+                            "parameters": parameters,
+                            "summary": {
+                                "total": total,
+                                "optimal": optimal_count,
+                                "needs_attention": needs_attention_count
+                            },
+                            "filter_applied": status_filter,
+                            "from_cache": True,
+                            "sync_source": "database",
+                            "sync_message": f"Data loaded from database (last synced: {recent_scores.updated_at.strftime('%b %d, %Y at %H:%M') if recent_scores.updated_at else 'Unknown'})",
+                            "cache_age_days": cache_age
+                        }
+                    else:
+                        logger.info(f"[AS-IS] ⚠️ No recent {tab} data in DB! Cache is {cache_age} days old (older than {MAX_CACHE_AGE_DAYS} days)")
+                else:
+                    logger.info(f"[AS-IS] ⚠️ No {tab} data found in database for user {user_id}")
+                db.close()
+            except Exception as e:
+                logger.warning(f"[AS-IS] Error checking database: {e}")
+        else:
+            logger.info(f"[AS-IS] Force refresh requested - skipping DB check")
+        
+        # === STEP 2: Fetch live data from APIs/Crawling ===
+        logger.info(f"[AS-IS] 🔄 Syncing {tab} data from APIs... (no recent data in DB)")
         domain = urlparse(site_url).netloc.replace("www.", "")
         
         # Gather signals based on tab
@@ -686,7 +928,10 @@ class AsIsStateService:
                 "optimal": optimal_count,
                 "needs_attention": needs_attention_count
             },
-            "filter_applied": status_filter
+            "filter_applied": status_filter,
+            "from_cache": False,
+            "sync_source": "api",
+            "sync_message": f"Data synced from live APIs (crawling + {tab} analysis)"
         }
     
     async def _gather_onpage_signals(self, urls: List[str]) -> Dict[str, Any]:

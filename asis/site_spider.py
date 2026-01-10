@@ -22,7 +22,7 @@ class SiteSpider:
         queue = [start_url]
         domain = urlparse(start_url).netloc
         
-        headers = {"User-Agent": "4SightBot/1.0"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         
         async with httpx.AsyncClient(timeout=5.0, follow_redirects=True, headers=headers, verify=False) as client:
             while queue and len(visited) < self.max_pages:

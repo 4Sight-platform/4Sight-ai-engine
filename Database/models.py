@@ -521,6 +521,18 @@ class AsIsSummaryCache(Base):
     baseline_visibility_score = Column(Float, nullable=True)
     baseline_captured_at = Column(TIMESTAMP, nullable=True)
     
+    # JSONB columns for complete data storage
+    from sqlalchemy.dialects.postgresql import JSONB
+    full_summary = Column(JSONB, nullable=True)          # Complete summary as JSONB
+    ranked_keywords = Column(JSONB, nullable=True)       # Keyword list with positions
+    top_pages = Column(JSONB, nullable=True)             # Top performing pages
+    competitor_rankings = Column(JSONB, nullable=True)   # Competitor list with scores
+    serp_features_detail = Column(JSONB, nullable=True)  # SERP features detail
+    
+    # Domain Authority (for Goal Setting)
+    domain_authority = Column(Integer, default=0)
+    baseline_domain_authority = Column(Integer, nullable=True)
+    
     last_updated = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -553,6 +565,8 @@ class AsIsProgressTimeline(Base):
     __table_args__ = (
         CheckConstraint("event_type IN ('score_improvement', 'score_decline', 'metric_change', 'milestone', 'baseline_captured')", name='chk_event_type'),
     )
+
+
 
 
 # ==================== ACTION PLAN Models ====================

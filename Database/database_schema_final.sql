@@ -670,10 +670,12 @@ CREATE TABLE as_is_scores (
 CREATE INDEX idx_asis_scores_user ON as_is_scores(user_id, snapshot_date);
 
 
--- 30. as_is_summary_cache - Summary card cache
+-- 30. as_is_summary_cache - Summary card cache (complete data storage)
 CREATE TABLE as_is_summary_cache (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Aggregate values (for quick queries)
     total_clicks INTEGER DEFAULT 0,
     clicks_change FLOAT DEFAULT 0.0,
     total_impressions INTEGER DEFAULT 0,
@@ -687,9 +689,33 @@ CREATE TABLE as_is_summary_cache (
     your_rank INTEGER NULL,
     total_competitors INTEGER DEFAULT 0,
     your_visibility_score FLOAT DEFAULT 0.0,
+    
+    -- JSONB columns for complete data storage (DB-first approach)
+    full_summary JSONB NULL,              -- Complete summary as JSONB
+    ranked_keywords JSONB NULL,           -- Keyword list with positions
+    top_pages JSONB NULL,                 -- Top performing pages
+    competitor_rankings JSONB NULL,       -- Competitor list with scores
+    serp_features_detail JSONB NULL,      -- SERP features with status
+    
+    -- Baseline fields (for lock period)
+    baseline_total_clicks INTEGER NULL,
+    baseline_total_impressions INTEGER NULL,
+    baseline_avg_position FLOAT NULL,
+    baseline_top10_keywords INTEGER NULL,
+    baseline_features_count INTEGER NULL,
+    baseline_your_rank INTEGER NULL,
+    baseline_visibility_score FLOAT NULL,
+    baseline_captured_at TIMESTAMP NULL,
+    
+    -- Domain Authority (for Goal Setting)
+    domain_authority INTEGER DEFAULT 0,
+    baseline_domain_authority INTEGER NULL,
+    
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_as_is_summary_full_summary ON as_is_summary_cache USING GIN (full_summary);
 
 
 -- ============================================

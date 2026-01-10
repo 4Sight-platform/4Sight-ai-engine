@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import date
 import os
 
 # Load environment variables
@@ -1342,10 +1343,32 @@ asis_service = AsIsStateService(
 async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
     """
     Get AS-IS summary data for the dashboard cards.
-    Requires an access token which should be refreshed before calling.
+    
+    Lock Behavior:
+    - If As-Is State is LOCKED: Returns data from immutable snapshot
+    - If As-Is State is UNLOCKED: Fetches live data from APIs
     """
     try:
-        # Get fresh access token
+        # Check for active lock - read from baseline if locked
+        db = SessionLocal()
+        try:
+            from asis.snapshot_lock_service import SnapshotLockService
+            lock_service = SnapshotLockService(db)
+            
+            if lock_service.should_read_from_baseline(request.user_id):
+                baseline_summary = lock_service.get_baseline_summary(request.user_id)
+                if baseline_summary:
+                    logger.info(f"[AS-IS] Reading summary from baseline for user {request.user_id}")
+                    return AsIsSummaryResponse(
+                        status="success",
+                        message="AS-IS summary retrieved from baseline (LOCKED)",
+                        user_id=request.user_id,
+                        data=baseline_summary
+                    )
+        finally:
+            db.close()
+        
+        # Not locked - fetch live data
         # Get fresh access token (Safe Mode)
         try:
             access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
@@ -1371,13 +1394,14 @@ async def get_asis_summary(request: AsIsSummaryRequest) -> AsIsSummaryResponse:
                 logger.warning(f"Could not fetch competitors from profile: {e}")
                 competitors = []
 
-        # Get summary data
+        # Get summary data (LIVE)
         summary = await asis_service.get_summary(
             user_id=request.user_id,
             access_token=access_token,
             site_url=request.site_url,
             tracked_keywords=request.tracked_keywords,
-            competitors=competitors
+            competitors=competitors,
+            skip_cache=request.skip_cache or False
         )
         
         return AsIsSummaryResponse(
@@ -1409,6 +1433,10 @@ async def get_asis_parameters(request: AsIsParametersRequest) -> AsIsParametersR
     """
     Get AS-IS parameter scores for the specified tab.
     Supports filtering by status (optimal, needs_attention).
+    
+    Lock Behavior:
+    - If As-Is State is LOCKED: Returns data from immutable snapshot
+    - If As-Is State is UNLOCKED: Fetches live data from APIs
     """
     try:
         # Validate tab
@@ -1426,11 +1454,54 @@ async def get_asis_parameters(request: AsIsParametersRequest) -> AsIsParametersR
                 detail="Invalid filter. Must be 'optimal' or 'needs_attention'"
             )
         
+        # Check for active lock - read from baseline if locked
+        db = SessionLocal()
+        try:
+            from asis.snapshot_lock_service import SnapshotLockService
+            lock_service = SnapshotLockService(db)
+            
+            if lock_service.should_read_from_baseline(request.user_id):
+                baseline_scores = lock_service.get_baseline_scores(request.user_id, tab=request.tab)
+                if baseline_scores:
+                    logger.info(f"[AS-IS] Reading {request.tab} parameters from baseline for user {request.user_id}")
+                    
+                    # Convert to list of dicts
+                    baseline_data = [
+                        {
+                            "group_id": score.parameter_group,
+                            "name": score.parameter_group,
+                            "sub_parameter": score.sub_parameter,
+                            "score": score.score,
+                            "status": score.status,
+                            "tab": score.parameter_tab,
+                            "details": score.details,
+                            "recommendation": score.recommendation
+                        }
+                        for score in baseline_scores
+                    ]
+                    
+                    # Apply status filter if provided
+                    if request.status_filter:
+                        baseline_data = [
+                            p for p in baseline_data 
+                            if p.get("status", "").lower() == request.status_filter.lower()
+                        ]
+                    
+                    return AsIsParametersResponse(
+                        status="success",
+                        message=f"AS-IS {request.tab} parameters retrieved from baseline (LOCKED)",
+                        user_id=request.user_id,
+                        data={"parameters": baseline_data}
+                    )
+        finally:
+            db.close()
+        
+        # Not locked - fetch live data
         # Get fresh access token
         access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
         access_token = access_token_result.get("access_token", "")
         
-        # Get parameters
+        # Get parameters (LIVE)
         parameters = await asis_service.get_parameters(
             user_id=request.user_id,
             access_token=access_token,
@@ -1563,8 +1634,34 @@ async def refresh_asis_data(request: AsIsRefreshRequest) -> AsIsRefreshResponse:
     - Crawl priority URLs
     - Update SERP features
     - Recompute all scores
+    
+    Lock Behavior:
+    - If As-Is State is LOCKED: Rejects with LOCKED_STATE error
+    - If As-Is State is UNLOCKED: Proceeds with refresh
     """
     try:
+        # Check for active lock - reject mutation if locked
+        db = SessionLocal()
+        try:
+            from asis.snapshot_lock_service import SnapshotLockService
+            lock_service = SnapshotLockService(db)
+            
+            if lock_service.is_locked(request.user_id):
+                lock_status = lock_service.get_lock_status(request.user_id)
+                logger.warning(f"[AS-IS] Refresh rejected - user {request.user_id} is locked")
+                return AsIsRefreshResponse(
+                    status="error",
+                    message=f"LOCKED_STATE: Cannot refresh data while As-Is State is locked. Lock expires on {lock_status.get('locked_until')}.",
+                    user_id=request.user_id,
+                    data={
+                        "error": "LOCKED_STATE",
+                        **lock_status
+                    }
+                )
+        finally:
+            db.close()
+        
+        # Not locked - proceed with refresh
         # Get fresh access token
         access_token_result = await oauth_manager.get_fresh_access_token(request.user_id)
         access_token = access_token_result.get("access_token", "")
@@ -1599,6 +1696,59 @@ async def refresh_asis_data(request: AsIsRefreshRequest) -> AsIsRefreshResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error refreshing data: {str(e)}"
         )
+
+
+# ==================== AS-IS State Lock Status API ====================
+# NOTE: There is NO separate lock button for As-Is State.
+# The lock is triggered AUTOMATICALLY from Keyword Universe finalize_selection.
+# This endpoint only provides lock STATUS information.
+
+from base_requests import AsIsLockStatusResponse
+from asis.snapshot_lock_service import SnapshotLockService
+from Database.database import SessionLocal
+
+
+@api_router.get(
+    "/as-is/lock/status/{user_id}",
+    response_model=AsIsLockStatusResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["AS-IS State"],
+    summary="Get As-Is Lock Status",
+    description="Returns current lock status (triggered by Keyword Universe lock)"
+)
+async def get_as_is_lock_status(user_id: str) -> AsIsLockStatusResponse:
+    """
+    Get current lock status for As-Is State.
+    
+    NOTE: Lock is triggered by Keyword Universe finalize_selection,
+    not by a separate As-Is lock endpoint.
+    
+    Returns:
+    - is_locked: Whether As-Is is currently locked
+    - status: 'locked', 'unlocked', 'expired', or 'no_universe'
+    - locked_until: Expiry date if locked
+    - has_baseline: Whether baseline data exists
+    - message: Human-readable status message
+    """
+    db = SessionLocal()
+    try:
+        lock_service = SnapshotLockService(db)
+        lock_status = lock_service.get_lock_status(user_id)
+        
+        return AsIsLockStatusResponse(
+            status="success",
+            message=lock_status.get("message", "Status retrieved"),
+            user_id=user_id,
+            data=lock_status
+        )
+    except Exception as e:
+        logger.error(f"[AS-IS Lock] Error getting lock status: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting lock status: {str(e)}"
+        )
+    finally:
+        db.close()
 
 
 # ==================== ACTION PLAN API ====================
@@ -2460,3 +2610,135 @@ async def get_action_plan_category_overview(user_id: str, category: str) -> Stan
         )
     finally:
         db.close()
+
+
+# ==================== Governance Goals Endpoints ====================
+
+@api_router.get(
+    "/governance/goals/performance/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Goals"],
+    summary="Get Goals Performance",
+    description="Get overall goals progress metrics for governance dashboard"
+)
+async def get_governance_goals_performance(user_id: str) -> StandardResponse:
+    """
+    Get goals governance metrics including:
+    - Average progress percentage across all active goals
+    - Count of goals on track (>= 70% progress)
+    - Total active goals count
+    - Goals completed count
+    """
+    from Database.database import get_db
+    from governance_dashboard.goals import GovernanceGoalsService
+    
+    db = next(get_db())
+    service = GovernanceGoalsService(db)
+    
+    try:
+        performance = service.get_performance(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message="Goals performance retrieved",
+            user_id=user_id,
+            data=performance
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting goals performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting goals performance: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/goals/breakdown/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Goals"],
+    summary="Get Goals Breakdown",
+    description="Get breakdown of each goal's progress"
+)
+async def get_governance_goals_breakdown(user_id: str) -> StandardResponse:
+    """
+    Get individual goal progress details including:
+    - Each goal's current progress
+    - Status (completed, on_track, in_progress, at_risk)
+    - Baseline, current, and target values
+    """
+    from Database.database import get_db
+    from governance_dashboard.goals import GovernanceGoalsService
+    
+    db = next(get_db())
+    service = GovernanceGoalsService(db)
+    
+    try:
+        breakdown = service.get_goals_breakdown(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message=f"Retrieved {len(breakdown)} goals",
+            user_id=user_id,
+            data={"goals": breakdown, "count": len(breakdown)}
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting goals breakdown: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting goals breakdown: {str(e)}"
+        )
+    finally:
+        db.close()
+
+
+@api_router.get(
+    "/governance/goals/cycle/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Governance - Goals"],
+    summary="Get Goals Cycle Info",
+    description="Get current goal cycle information"
+)
+async def get_governance_goals_cycle(user_id: str) -> StandardResponse:
+    """
+    Get current 90-day cycle information including:
+    - Cycle start and end dates
+    - Days remaining in cycle
+    - Cycle progress percentage
+    """
+    from Database.database import get_db
+    from governance_dashboard.goals import GovernanceGoalsService
+    
+    db = next(get_db())
+    service = GovernanceGoalsService(db)
+    
+    try:
+        cycle_info = service.get_cycle_info(user_id)
+        
+        if not cycle_info:
+            return StandardResponse(
+                status="success",
+                message="No active goal cycle found",
+                user_id=user_id,
+                data=None
+            )
+        
+        return StandardResponse(
+            status="success",
+            message="Cycle info retrieved",
+            user_id=user_id,
+            data=cycle_info
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error getting goals cycle info: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting goals cycle info: {str(e)}"
+        )
+    finally:
+        db.close()
+

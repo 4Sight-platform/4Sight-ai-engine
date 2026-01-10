@@ -257,9 +257,9 @@ class GovernanceAsIsService(AsIsStateService):
              user_id, access_token, site_url, priority_urls, tracked_keywords, competitors
         )
         
-        # 2. Get latest summary data (computed from fresh fetches/db)
         summary_data = await self.get_summary(
-             user_id, access_token, site_url, tracked_keywords, competitors
+             user_id, access_token, site_url, tracked_keywords, competitors,
+             force_refresh=True
         )
         
         # 3. Save Summary to Cache Table

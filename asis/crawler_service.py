@@ -27,7 +27,8 @@ class CrawlerService:
     """
     
     # User agent for crawling
-    USER_AGENT = "4SightBot/1.0 (+https://4sight.ai/bot)"
+    # User agent for crawling (mimic Chrome to avoid WAF blocks)
+    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
     # Request timeout
     TIMEOUT = 30.0
