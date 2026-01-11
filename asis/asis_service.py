@@ -767,7 +767,7 @@ class AsIsStateService:
             site_url: User's website
             priority_urls: URLs to crawl (from onboarding)
             tab: 'onpage', 'offpage', or 'technical'
-            status_filter: 'optimal' or 'needs_attention' (None = all)
+            status_filter: 'optimal' or 'needs_improvement' (None = all)
             force_refresh: If True, bypasses cache and fetches live data
             
         Returns:
@@ -808,7 +808,7 @@ class AsIsStateService:
                                 "group_id": score.parameter_group,
                                 "name": score.parameter_group,
                                 "score": score.score or 0,
-                                "status": score.status or "needs_attention",
+                                "status": score.status or "needs_improvement",
                                 "tab": score.parameter_tab
                             }
                             # Add details if available
@@ -829,7 +829,7 @@ class AsIsStateService:
                         # Calculate summary stats
                         total = len(parameters)
                         optimal_count = len([p for p in parameters if p["status"] == "optimal"])
-                        needs_attention_count = len([p for p in parameters if p["status"] == "needs_attention"])
+                        needs_improvement_count = len([p for p in parameters if p["status"] == "needs_improvement"])
                         
                         return {
                             "tab": tab,
@@ -837,7 +837,7 @@ class AsIsStateService:
                             "summary": {
                                 "total": total,
                                 "optimal": optimal_count,
-                                "needs_attention": needs_attention_count
+                                "needs_improvement": needs_improvement_count
                             },
                             "filter_applied": status_filter,
                             "from_cache": True,
@@ -910,8 +910,8 @@ class AsIsStateService:
             else:
                 backlink_analysis = {}
                 spam_analysis = {"spam_score": 0, "status": "optimal"}
-                context_analysis = {"contextual_ratio": 0.5, "status": "needs_attention"}
-                relevance_analysis = {"irrelevant_ratio": 0.3, "status": "needs_attention"}
+                context_analysis = {"contextual_ratio": 0.5, "status": "needs_improvement"}
+                relevance_analysis = {"irrelevant_ratio": 0.3, "status": "needs_improvement"}
                 health_scores = {}
             
             # Fetch brand mention data
@@ -1036,7 +1036,7 @@ class AsIsStateService:
                      parameter_tab=tab,
                      parameter_group=p["group_id"],
                      score=p.get("score", 0),
-                     status=p.get("status", "needs_attention"),
+                     status=p.get("status", "needs_improvement"),
                      details=json.dumps(p),
                      snapshot_date=today
                  )
@@ -1050,7 +1050,7 @@ class AsIsStateService:
         # Calculate summary stats
         total = len(parameters)
         optimal_count = len([p for p in parameters if p["status"] == "optimal"])
-        needs_attention_count = len([p for p in parameters if p["status"] == "needs_attention"])
+        needs_improvement_count = len([p for p in parameters if p["status"] == "needs_improvement"])
         
         return {
             "tab": tab,
@@ -1058,7 +1058,7 @@ class AsIsStateService:
             "summary": {
                 "total": total,
                 "optimal": optimal_count,
-                "needs_attention": needs_attention_count
+                "needs_improvement": needs_improvement_count
             },
             "filter_applied": status_filter,
             "from_cache": False,

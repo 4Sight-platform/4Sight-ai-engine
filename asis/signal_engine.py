@@ -351,10 +351,10 @@ class SignalEngine:
                 map_value = "Keywords mapped to H1/H2s correctly"
             elif has_primary_mapping:
                 score += 10
-                map_status = "needs_attention"
+                map_status = "needs_improvement"
                 map_value = "Primary mapping good, secondary missing"
             else:
-                map_status = "needs_attention"
+                map_status = "needs_improvement"
                 map_value = "Keyword mapping unclear"
                 
             details["primary_vs_secondary_keyword_mapping"] = {
@@ -378,7 +378,7 @@ class SignalEngine:
             if kw_in_body: placements.append("Body"); placement_score += 5
             
             if len(placements) >= 2: placement_status = "optimal"
-            else: placement_status = "needs_attention"
+            else: placement_status = "needs_improvement"
             
             details["keyword_placement"] = {
                 "value": f"Found in: {', '.join(placements)}" if placements else "Not found",
@@ -397,10 +397,10 @@ class SignalEngine:
                 const_status = "optimal"
                 const_value = f"Good density ({density:.1f}%)"
             elif density > 3.0:
-                const_status = "needs_attention"
+                const_status = "needs_improvement"
                 const_value = f"Potential stuffing ({density:.1f}%)"
             else:
-                const_status = "needs_attention"
+                const_status = "needs_improvement"
                 const_value = f"Low density ({density:.1f}%)"
                 score += 10
                 
@@ -413,7 +413,7 @@ class SignalEngine:
             # Fallback if no keywords
             for k in ["target_keyword_presence", "primary_vs_secondary_keyword_mapping", 
                       "keyword_cannibalization_signals", "keyword_placement", "keyword_consistency"]:
-                details[k] = {"value": "No keyword set", "status": "needs_attention"}
+                details[k] = {"value": "No keyword set", "status": "needs_improvement"}
             score = 50
         
         return min(score, 100), details
@@ -439,7 +439,7 @@ class SignalEngine:
             title_value = f"Present ({title_len} chars)"
         else:
             score += 10
-            title_status = "needs_attention"
+            title_status = "needs_improvement"
             title_value = f"Present ({title_len} chars)"
         
         details["title_tag_presence_optimization"] = {"value": title_value, "status": title_status}
@@ -457,7 +457,7 @@ class SignalEngine:
             meta_value = f"Present ({meta_len} chars)"
         else:
             score += 10
-            meta_status = "needs_attention"
+            meta_status = "needs_improvement"
             meta_value = f"Present ({meta_len} chars)"
         
         details["meta_description_presence_quality"] = {"value": meta_value, "status": meta_status}
@@ -478,7 +478,7 @@ class SignalEngine:
         meta_pixel_res = PixelWidthCalculator.check_truncation(meta_text, 990, is_title=False)
         
         if pixel_res['truncated'] or meta_pixel_res['truncated']:
-            pix_status = "needs_attention"
+            pix_status = "needs_improvement"
             pix_value = "Truncation risk detected"
         else:
             score += 20
@@ -499,7 +499,7 @@ class SignalEngine:
             ctr_status = "optimal"
             ctr_value = f"CTR signals found: {', '.join(ctr_features)}"
         else:
-            ctr_status = "needs_attention"
+            ctr_status = "needs_improvement"
             ctr_value = "No CTR boosters in title"
             score += 10
             
@@ -524,7 +524,7 @@ class SignalEngine:
             h1_value = "1 H1 tag - unique and present"
         elif h1_count > 1:
             score += 10
-            h1_status = "needs_attention"
+            h1_status = "needs_improvement"
             h1_value = f"{h1_count} H1 tags - multiple detected"
         else:
             h1_status = "critical"
@@ -553,7 +553,7 @@ class SignalEngine:
             hierarchy_value = f"Well-structured ({', '.join(parts)}...)"
         elif total >= 1:
             score += 10
-            hierarchy_status = "needs_attention"
+            hierarchy_status = "needs_improvement"
             hierarchy_value = "Minimal structure"
         else:
             hierarchy_status = "critical"
@@ -572,7 +572,7 @@ class SignalEngine:
             order_status = "optimal"
             order_value = "Proper heading order maintained"
         else:
-            order_status = "needs_attention"
+            order_status = "needs_improvement"
             order_value = "Heading levels skipped or out of order"
         
         details["heading_order_issues"] = {
@@ -588,10 +588,10 @@ class SignalEngine:
             f100_value = "Keywords found in first 100 words"
         else:
             if not first_100:
-                f100_status = "needs_attention"
+                f100_status = "needs_improvement"
                 f100_value = "Content not extracted"
             else:
-                f100_status = "needs_attention"
+                f100_status = "needs_improvement"
                 f100_value = "Keywords not found in intro"
                 score += 5
         
@@ -604,7 +604,7 @@ class SignalEngine:
             sect_status = "optimal"
             sect_value = f"Content sectioned ({h2_count} H2s)"
         else:
-            sect_status = "needs_attention"
+            sect_status = "needs_improvement"
             sect_value = "Poor sectioning (few headings)"
             score += 5
             
@@ -644,11 +644,11 @@ class SignalEngine:
                 alt_value = f"{with_alt}/{image_count} images have alt text"
             elif alt_ratio >= 0.8:
                 score += 35
-                alt_status = "needs_attention"
+                alt_status = "needs_improvement"
                 alt_value = f"{with_alt}/{image_count} images have alt text ({without_alt} missing)"
             elif alt_ratio >= 0.5:
                 score += 20
-                alt_status = "needs_attention"
+                alt_status = "needs_improvement"
                 alt_value = f"{with_alt}/{image_count} images have alt text ({without_alt} missing)"
             else:
                 score += 5
@@ -675,7 +675,7 @@ class SignalEngine:
                 lazy_value = f"{lazy_count}/{image_count} images use lazy loading"
             elif lazy_ratio >= 0.5:
                 score += 30
-                lazy_status = "needs_attention"
+                lazy_status = "needs_improvement"
                 lazy_value = f"{lazy_count}/{image_count} images use lazy loading"
             else:
                 score += 5
@@ -705,7 +705,7 @@ class SignalEngine:
                 naming_value = "Descriptive filenames"
             elif bad_names / image_count < 0.3:
                 score += 10
-                naming_status = "needs_attention"
+                naming_status = "needs_improvement"
                 naming_value = f"{bad_names} generic filenames detected"
             else:
                 naming_status = "critical"
@@ -731,10 +731,10 @@ class SignalEngine:
                 rel_status = "optimal"
                 rel_value = f"{relevant_count} images contextually relevant"
             else:
-                rel_status = "needs_attention"
+                rel_status = "needs_improvement"
                 rel_value = "Images may lack context (keywords not in alt)"
         else:
-            rel_status = "optimal" if image_count == 0 else "needs_attention"
+            rel_status = "optimal" if image_count == 0 else "needs_improvement"
             rel_value = "Relevance check skipped"
             
         details["image_relevance"] = {"value": rel_value, "status": rel_status}
@@ -754,7 +754,7 @@ class SignalEngine:
                 acc_status = "optimal"
                 acc_value = "High compliance (meaningful alt text)"
             else:
-                acc_status = "needs_attention"
+                acc_status = "needs_improvement"
                 acc_value = "Some images lack meaningful descriptions"
         else:
             acc_status = "optimal"
@@ -790,11 +790,11 @@ class SignalEngine:
             structure_value = f"Depth {depth} - optimal"
         elif depth <= 5:
             score += 10
-            structure_status = "needs_attention"
+            structure_status = "needs_improvement"
             structure_value = f"Depth {depth} - moderately deep"
         else:
             score += 5
-            structure_status = "needs_attention"
+            structure_status = "needs_improvement"
             structure_value = f"Depth {depth} - consider flattening"
         
         details["url_structure"] = {
@@ -811,14 +811,14 @@ class SignalEngine:
             length_value = f"{url_len} chars - optimal"
         elif url_len <= 100:
             score += 10
-            length_status = "needs_attention"
+            length_status = "needs_improvement"
             length_value = f"{url_len} chars - acceptable"
         elif url_len > 0:
             score += 5
             length_status = "critical"
             length_value = f"{url_len} chars - too long"
         else:
-            length_status = "needs_attention"
+            length_status = "needs_improvement"
             length_value = "Unable to determine"
         
         details["url_length"] = {
@@ -845,10 +845,10 @@ class SignalEngine:
                 kw_status = "optimal"
                 kw_value = f"Keyword '{keywords[0]}' found in URL"
             else:
-                kw_status = "needs_attention"
+                kw_status = "needs_improvement"
                 kw_value = f"Keyword '{keywords[0]}' not in URL"
         else:
-            kw_status = "needs_attention"
+            kw_status = "needs_improvement"
             kw_value = "No target keyword configured"
             score += 10
         
@@ -865,7 +865,7 @@ class SignalEngine:
             param_status = "optimal"
             param_value = "Clean URL - no query parameters"
         else:
-            param_status = "needs_attention"
+            param_status = "needs_improvement"
             param_value = "URL contains query parameters"
         
         details["parameterized_urls"] = {
@@ -883,10 +883,10 @@ class SignalEngine:
             canon_value = "Self-referencing canonical"
         elif canonical_url:
             score += 10
-            canon_status = "needs_attention"
+            canon_status = "needs_improvement"
             canon_value = f"Canonical points to: {canonical_url[:50]}..."
         else:
-            canon_status = "needs_attention"
+            canon_status = "needs_improvement"
             canon_value = "No canonical tag found"
         
         details["canonical_alignment"] = {
@@ -1032,7 +1032,7 @@ class SignalEngine:
             details["referring_domains_count"] = {"value": f"~{referring_domains}", "status": "optimal"}
             score += 20
         elif referring_domains >= 20:
-            details["referring_domains_count"] = {"value": f"~{referring_domains}", "status": "needs_attention"}
+            details["referring_domains_count"] = {"value": f"~{referring_domains}", "status": "needs_improvement"}
             score += 12
         else:
             details["referring_domains_count"] = {"value": f"~{referring_domains}", "status": "critical"}
@@ -1043,10 +1043,10 @@ class SignalEngine:
             details["authority_score"] = {"value": f"DA ~{int(avg_authority)}", "status": "optimal"}
             score += 20
         elif avg_authority >= 40:
-            details["authority_score"] = {"value": f"DA ~{int(avg_authority)}", "status": "needs_attention"}
+            details["authority_score"] = {"value": f"DA ~{int(avg_authority)}", "status": "needs_improvement"}
             score += 12
         else:
-            details["authority_score"] = {"value": f"DA ~{int(avg_authority)}", "status": "needs_attention"}
+            details["authority_score"] = {"value": f"DA ~{int(avg_authority)}", "status": "needs_improvement"}
             score += 8
         
         # BRD Param 3: spam_score ("Moderate, some risky links" style)
@@ -1055,7 +1055,7 @@ class SignalEngine:
             details["spam_score"] = {"value": "Low, minimal risky links", "status": "optimal"}
             score += 20
         elif spam_score_val < 35:
-            details["spam_score"] = {"value": "Moderate, some risky links", "status": "needs_attention"}
+            details["spam_score"] = {"value": "Moderate, some risky links", "status": "needs_improvement"}
             score += 12
         else:
             details["spam_score"] = {"value": "High, many risky links", "status": "critical"}
@@ -1067,10 +1067,10 @@ class SignalEngine:
             details["follow_vs_nofollow_backlinks"] = {"value": "Balanced mix", "status": "optimal"}
             score += 20
         elif dofollow_ratio > 0.9:
-            details["follow_vs_nofollow_backlinks"] = {"value": "Too many follow links", "status": "needs_attention"}
+            details["follow_vs_nofollow_backlinks"] = {"value": "Too many follow links", "status": "needs_improvement"}
             score += 10
         else:
-            details["follow_vs_nofollow_backlinks"] = {"value": "Too many nofollow links", "status": "needs_attention"}
+            details["follow_vs_nofollow_backlinks"] = {"value": "Too many nofollow links", "status": "needs_improvement"}
             score += 10
         
         # BRD Param 5: link_source_quality_distribution ("Majority contextual, ~15% irrelevant")
@@ -1086,13 +1086,13 @@ class SignalEngine:
                 details["link_source_quality_distribution"] = {"value": f"Strong quality, ~{int(low_ratio*100)}% low quality", "status": "optimal"}
                 score += 15
             elif high_ratio >= 0.15:
-                details["link_source_quality_distribution"] = {"value": f"Moderate quality, ~{int(low_ratio*100)}% low quality", "status": "needs_attention"}
+                details["link_source_quality_distribution"] = {"value": f"Moderate quality, ~{int(low_ratio*100)}% low quality", "status": "needs_improvement"}
                 score += 10
             else:
-                details["link_source_quality_distribution"] = {"value": f"Low quality sources, ~{int(low_ratio*100)}% low quality", "status": "needs_attention"}
+                details["link_source_quality_distribution"] = {"value": f"Low quality sources, ~{int(low_ratio*100)}% low quality", "status": "needs_improvement"}
                 score += 5
         else:
-            details["link_source_quality_distribution"] = {"value": "No data available", "status": "needs_attention"}
+            details["link_source_quality_distribution"] = {"value": "No data available", "status": "needs_improvement"}
             score += 10
         
         return min(score, 100), details
@@ -1121,7 +1121,7 @@ class SignalEngine:
             details["contextual_links"] = {"value": f"Strong presence ({int(contextual_ratio*100)}% contextual)", "status": "optimal"}
             score += 40
         elif contextual_ratio >= 0.4:
-            details["contextual_links"] = {"value": f"Majority contextual, ~{int(irrelevant_ratio*100)}% irrelevant", "status": "needs_attention"}
+            details["contextual_links"] = {"value": f"Majority contextual, ~{int(irrelevant_ratio*100)}% irrelevant", "status": "needs_improvement"}
             score += 25
         else:
             details["contextual_links"] = {"value": f"Low contextual ({int(contextual_ratio*100)}%)", "status": "critical"}
@@ -1133,7 +1133,7 @@ class SignalEngine:
             details["toxic_score"] = {"value": f"Low, <{int(spam_score)}% toxic", "status": "optimal"}
             score += 35
         elif spam_score < 30:
-            details["toxic_score"] = {"value": f"Manageable, ~{int(spam_score)}% toxic", "status": "needs_attention"}
+            details["toxic_score"] = {"value": f"Manageable, ~{int(spam_score)}% toxic", "status": "needs_improvement"}
             score += 20
         else:
             details["toxic_score"] = {"value": f"High, ~{int(spam_score)}% toxic", "status": "critical"}
@@ -1144,7 +1144,7 @@ class SignalEngine:
             details["irrelevant_link_detection"] = {"value": f"~{int(irrelevant_ratio*100)}%", "status": "optimal"}
             score += 25
         elif irrelevant_ratio < 0.30:
-            details["irrelevant_link_detection"] = {"value": f"~{int(irrelevant_ratio*100)}%", "status": "needs_attention"}
+            details["irrelevant_link_detection"] = {"value": f"~{int(irrelevant_ratio*100)}%", "status": "needs_improvement"}
             score += 15
         else:
             details["irrelevant_link_detection"] = {"value": f"~{int(irrelevant_ratio*100)}% (high)", "status": "critical"}
@@ -1168,8 +1168,8 @@ class SignalEngine:
         
         if total_anchors == 0:
             # No data available
-            details["anchor_text_distribution"] = {"value": "No data", "status": "needs_attention"}
-            details["exact_match_anchor_frequency"] = {"value": "No data", "status": "needs_attention"}
+            details["anchor_text_distribution"] = {"value": "No data", "status": "needs_improvement"}
+            details["exact_match_anchor_frequency"] = {"value": "No data", "status": "needs_improvement"}
             return 50, details
         
         # BRD Param 1: anchor_text_distribution ("Balanced")
@@ -1192,7 +1192,7 @@ class SignalEngine:
             details["anchor_text_distribution"] = {"value": "Over-optimized (too many exact match)", "status": "critical"}
             score += 20
         else:
-            details["anchor_text_distribution"] = {"value": "Needs improvement", "status": "needs_attention"}
+            details["anchor_text_distribution"] = {"value": "Needs improvement", "status": "needs_improvement"}
             score += 35
         
         # BRD Param 2: exact_match_anchor_frequency ("~12% (slightly high)")
@@ -1201,7 +1201,7 @@ class SignalEngine:
             details["exact_match_anchor_frequency"] = {"value": f"~{exact_pct}%", "status": "optimal"}
             score += 40
         elif exact_pct < 15:
-            details["exact_match_anchor_frequency"] = {"value": f"~{exact_pct}% (slightly high)", "status": "needs_attention"}
+            details["exact_match_anchor_frequency"] = {"value": f"~{exact_pct}% (slightly high)", "status": "needs_improvement"}
             score += 25
         else:
             details["exact_match_anchor_frequency"] = {"value": f"~{exact_pct}% (risky)", "status": "critical"}
@@ -1233,10 +1233,10 @@ class SignalEngine:
             details["unlinked_brand_mentions"] = {"value": f"Present ({unlinked_count} opportunities)", "status": "optimal"}
             score += 30
         elif unlinked_count >= 5:
-            details["unlinked_brand_mentions"] = {"value": "Present, not leveraged", "status": "needs_attention"}
+            details["unlinked_brand_mentions"] = {"value": "Present, not leveraged", "status": "needs_improvement"}
             score += 18
         else:
-            details["unlinked_brand_mentions"] = {"value": "Limited opportunities", "status": "needs_attention"}
+            details["unlinked_brand_mentions"] = {"value": "Limited opportunities", "status": "needs_improvement"}
             score += 10
         
         # BRD Param 2: brand_citations ("Moderate")
@@ -1245,10 +1245,10 @@ class SignalEngine:
             details["brand_citations"] = {"value": "Strong", "status": "optimal"}
             score += 25
         elif total_mentions >= 15:
-            details["brand_citations"] = {"value": "Moderate", "status": "needs_attention"}
+            details["brand_citations"] = {"value": "Moderate", "status": "needs_improvement"}
             score += 15
         else:
-            details["brand_citations"] = {"value": "Limited", "status": "needs_attention"}
+            details["brand_citations"] = {"value": "Limited", "status": "needs_improvement"}
             score += 8
         
         # BRD Param 3: consistency_of_brand_name_usage ("Mostly consistent")
@@ -1259,10 +1259,10 @@ class SignalEngine:
             details["consistency_of_brand_name_usage"] = {"value": "Highly consistent", "status": "optimal"}
             score += 25
         elif consistency_score >= 60:
-            details["consistency_of_brand_name_usage"] = {"value": "Mostly consistent", "status": "needs_attention"}
+            details["consistency_of_brand_name_usage"] = {"value": "Mostly consistent", "status": "needs_improvement"}
             score += 15
         else:
-            details["consistency_of_brand_name_usage"] = {"value": "Inconsistent", "status": "needs_attention"}
+            details["consistency_of_brand_name_usage"] = {"value": "Inconsistent", "status": "needs_improvement"}
             score += 8
         
         # BRD Param 4: industry_mentions ("Limited")
@@ -1273,10 +1273,10 @@ class SignalEngine:
             details["industry_mentions"] = {"value": f"Strong ({industry_count} mentions)", "status": "optimal"}
             score += 20
         elif industry_count >= 3:
-            details["industry_mentions"] = {"value": "Moderate", "status": "needs_attention"}
+            details["industry_mentions"] = {"value": "Moderate", "status": "needs_improvement"}
             score += 12
         else:
-            details["industry_mentions"] = {"value": "Limited", "status": "needs_attention"}
+            details["industry_mentions"] = {"value": "Limited", "status": "needs_improvement"}
             score += 6
         
         return min(score, 100), details
@@ -1305,10 +1305,10 @@ class SignalEngine:
             details["monthly_link_acquisition_trend"] = {"value": "Steady", "status": "optimal"}
             score += 40
         elif referring_domains >= 50:
-            details["monthly_link_acquisition_trend"] = {"value": "Moderate", "status": "needs_attention"}
+            details["monthly_link_acquisition_trend"] = {"value": "Moderate", "status": "needs_improvement"}
             score += 25
         else:
-            details["monthly_link_acquisition_trend"] = {"value": "Low acquisition", "status": "needs_attention"}
+            details["monthly_link_acquisition_trend"] = {"value": "Low acquisition", "status": "needs_improvement"}
             score += 15
         
         # BRD Param 2: link_velocity_spikes ("None detected")
@@ -1317,7 +1317,7 @@ class SignalEngine:
             details["link_velocity_spikes"] = {"value": "None detected", "status": "optimal"}
             score += 35
         elif 0.2 <= dofollow_ratio <= 0.9 and spam_score < 40:
-            details["link_velocity_spikes"] = {"value": "Some irregularities", "status": "needs_attention"}
+            details["link_velocity_spikes"] = {"value": "Some irregularities", "status": "needs_improvement"}
             score += 20
         else:
             details["link_velocity_spikes"] = {"value": "Suspicious patterns detected", "status": "critical"}
@@ -1329,7 +1329,7 @@ class SignalEngine:
             details["historical_growth_patterns"] = {"value": "Positive, stable", "status": "optimal"}
             score += 25
         elif spam_score < 35:
-            details["historical_growth_patterns"] = {"value": "Generally positive", "status": "needs_attention"}
+            details["historical_growth_patterns"] = {"value": "Generally positive", "status": "needs_improvement"}
             score += 15
         else:
             details["historical_growth_patterns"] = {"value": "Unstable patterns", "status": "critical"}
@@ -1461,7 +1461,7 @@ class SignalEngine:
             details["xml_sitemap_health"] = {"value": "Healthy", "status": "optimal"}
             score += 20
         elif sitemap_exists:
-            details["xml_sitemap_health"] = {"value": "Exists (Issues)", "status": "needs_attention"}
+            details["xml_sitemap_health"] = {"value": "Exists (Issues)", "status": "needs_improvement"}
             score += 10
         else:
             details["xml_sitemap_health"] = {"value": "Missing", "status": "critical"}
@@ -1483,7 +1483,7 @@ class SignalEngine:
             details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed", "status": "optimal"}
             score += 20
         elif coverage >= 0.7:
-            details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed", "status": "needs_attention"}
+            details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed", "status": "needs_improvement"}
             score += 10
         else:
             details["indexed_vs_non_indexed_pages"] = {"value": f"~{pct}% indexed (low)", "status": "critical"}
@@ -1495,7 +1495,7 @@ class SignalEngine:
             details["crawl_budget_efficiency"] = {"value": "Efficient", "status": "optimal"}
             score += 20
         else:
-            details["crawl_budget_efficiency"] = {"value": "Inefficient (Errors)", "status": "needs_attention"}
+            details["crawl_budget_efficiency"] = {"value": "Inefficient (Errors)", "status": "needs_improvement"}
             score += 10
             
         # 5. Orphan URLs (Moved from Canonicalization)
@@ -1504,7 +1504,7 @@ class SignalEngine:
             details["orphan_urls"] = {"value": "None", "status": "optimal"}
             score += 20
         else:
-            details["orphan_urls"] = {"value": f"{len(orphans)} detected", "status": "needs_attention"}
+            details["orphan_urls"] = {"value": f"{len(orphans)} detected", "status": "needs_improvement"}
             score += 10
 
         return min(score, 100), details
@@ -1530,7 +1530,7 @@ class SignalEngine:
             details["canonical_tag_implementation"] = {"value": "Present", "status": "optimal"}
             score += 25
         else:
-            details["canonical_tag_implementation"] = {"value": f"{canon_issues} issues", "status": "needs_attention"}
+            details["canonical_tag_implementation"] = {"value": f"{canon_issues} issues", "status": "needs_improvement"}
             score += 10
             
         # 3. Duplicate URLs
@@ -1539,7 +1539,7 @@ class SignalEngine:
             details["duplicate_urls"] = {"value": "None", "status": "optimal"}
             score += 25
         else:
-            details["duplicate_urls"] = {"value": f"{dup_count} potential duplicates", "status": "needs_attention"}
+            details["duplicate_urls"] = {"value": f"{dup_count} potential duplicates", "status": "needs_improvement"}
             score += 10
             
         # 4. HTTP vs HTTPS duplicates
@@ -1558,7 +1558,7 @@ class SignalEngine:
             details["trailing_slash_issues"] = {"value": "Consistent", "status": "optimal"}
             score += 25
         else:
-            details["trailing_slash_issues"] = {"value": "Inconsistent", "status": "needs_attention"}
+            details["trailing_slash_issues"] = {"value": "Inconsistent", "status": "needs_improvement"}
             score += 10
             
         return min(score, 100), details
@@ -1582,7 +1582,7 @@ class SignalEngine:
             details["lcp_performance"] = {"value": f"~{lcp_val}", "status": "optimal"}
             score += 25
         elif lcp_status == "NEEDS_IMPROVEMENT":
-            details["lcp_performance"] = {"value": f"~{lcp_val}", "status": "needs_attention"}
+            details["lcp_performance"] = {"value": f"~{lcp_val}", "status": "needs_improvement"}
             score += 15
         else:
             details["lcp_performance"] = {"value": f"~{lcp_val}", "status": "critical"}
@@ -1595,7 +1595,7 @@ class SignalEngine:
             details["inp_performance"] = {"value": f"~{inp_val}", "status": "optimal"}
             score += 25
         else:
-            details["inp_performance"] = {"value": f"~{inp_val}", "status": "needs_attention"}
+            details["inp_performance"] = {"value": f"~{inp_val}", "status": "needs_improvement"}
             score += 15
             
         # 3. CLS
@@ -1605,7 +1605,7 @@ class SignalEngine:
             details["cls_stability"] = {"value": "Stable", "status": "optimal"}
             score += 25
         else:
-            details["cls_stability"] = {"value": "Unstable", "status": "needs_attention"}
+            details["cls_stability"] = {"value": "Unstable", "status": "needs_improvement"}
             score += 15
             
         # 4. Mobile vs Desktop
@@ -1616,7 +1616,7 @@ class SignalEngine:
             details["mobile_vs_desktop_cwv"] = {"value": "Both Strong", "status": "optimal"}
             score += 25
         elif desktop_pass:
-             details["mobile_vs_desktop_cwv"] = {"value": "Mobile weaker", "status": "needs_attention"}
+             details["mobile_vs_desktop_cwv"] = {"value": "Mobile weaker", "status": "needs_improvement"}
              score += 15
         else:
              details["mobile_vs_desktop_cwv"] = {"value": "Both Weak", "status": "critical"}
@@ -1644,7 +1644,7 @@ class SignalEngine:
             details["javascript_rendering_issues"] = {"value": "None detected", "status": "optimal"}
             score += 20
         else:
-            details["javascript_rendering_issues"] = {"value": "Render-blocking JS", "status": "needs_attention"}
+            details["javascript_rendering_issues"] = {"value": "Render-blocking JS", "status": "needs_improvement"}
             score += 10
             
         # 2. Delayed/Lazy Content
@@ -1654,7 +1654,7 @@ class SignalEngine:
             details["delayed_lazy_content"] = {"value": "Optimal", "status": "optimal"}
             score += 20
         else:
-            details["delayed_lazy_content"] = {"value": "Present", "status": "needs_attention"}
+            details["delayed_lazy_content"] = {"value": "Present", "status": "needs_improvement"}
             score += 10
             
         # 3. Hidden Content
@@ -1667,7 +1667,7 @@ class SignalEngine:
             details["client_side_rendering_risks"] = {"value": "Low (SSR)", "status": "optimal"}
             score += 20
         else:
-            details["client_side_rendering_risks"] = {"value": "Moderate", "status": "needs_attention"}
+            details["client_side_rendering_risks"] = {"value": "Moderate", "status": "needs_improvement"}
             score += 10
             
         # 5. Critical Resource Blocking
@@ -1676,7 +1676,7 @@ class SignalEngine:
             details["critical_resource_blocking"] = {"value": "None", "status": "optimal"}
             score += 20
         else:
-             details["critical_resource_blocking"] = {"value": "Detected", "status": "needs_attention"}
+             details["critical_resource_blocking"] = {"value": "Detected", "status": "needs_improvement"}
              score += 10
              
         return min(score, 100), details
@@ -1699,7 +1699,7 @@ class SignalEngine:
             details["llm_txt_presence_rules"] = {"value": "Present", "status": "optimal"}
             score += 25
         else:
-            details["llm_txt_presence_rules"] = {"value": "Missing", "status": "needs_attention"}
+            details["llm_txt_presence_rules"] = {"value": "Missing", "status": "needs_improvement"}
             score += 5
             
         # 2. AI Crawler Permissions
@@ -1709,16 +1709,16 @@ class SignalEngine:
             details["ai_crawler_permissions"] = {"value": "Managed", "status": "optimal"}
             score += 25
         else:
-            details["ai_crawler_permissions"] = {"value": "Not defined", "status": "needs_attention"}
+            details["ai_crawler_permissions"] = {"value": "Not defined", "status": "needs_improvement"}
             score += 10
             
         # 3. Content Usage
         # Heuristic
-        details["content_usage_signals"] = {"value": "Absent", "status": "needs_attention"}
+        details["content_usage_signals"] = {"value": "Absent", "status": "needs_improvement"}
         score += 25 
         
         # 4. AI Indexing
-        details["ai_indexing_exposure"] = {"value": "Not tracked", "status": "needs_attention"}
+        details["ai_indexing_exposure"] = {"value": "Not tracked", "status": "needs_improvement"}
         score += 25
         
         return min(score, 100), details

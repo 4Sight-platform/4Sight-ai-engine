@@ -44,7 +44,7 @@ class ActionPlanService:
             # Get user's SEO goals for alignment
             goals = self._get_user_goals(user_id)
             
-            # Generate tasks from as_is_scores with critical/needs_attention status
+            # Generate tasks from as_is_scores with critical/needs_improvement status
             onpage_count = self._generate_tasks_from_scores(user_id, "onpage", goals)
             offpage_count = self._generate_tasks_from_scores(user_id, "offpage", goals)
             technical_count = self._generate_tasks_from_scores(user_id, "technical", goals)
@@ -75,11 +75,11 @@ class ActionPlanService:
         """Generate tasks from as_is_scores for a specific tab (onpage/offpage/technical)"""
         tasks_created = 0
         
-        # Query as_is_scores for parameters with critical or needs_attention status
+        # Query as_is_scores for parameters with critical or needs_improvement status
         problem_scores = self.db.query(AsIsScore).filter(
             AsIsScore.user_id == user_id,
             AsIsScore.parameter_tab == tab,
-            AsIsScore.status.in_(['critical', 'needs_attention'])
+            AsIsScore.status.in_(['critical', 'needs_improvement'])
         ).all()
         
         if not problem_scores:
@@ -92,7 +92,7 @@ class ActionPlanService:
             if score.status == 'critical':
                 impact = 9
                 effort = self._estimate_effort(score.parameter_group, score.sub_parameter, tab)
-            else:  # needs_attention
+            else:  # needs_improvement
                 impact = 7
                 effort = self._estimate_effort(score.parameter_group, score.sub_parameter, tab)
             
