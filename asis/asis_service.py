@@ -202,6 +202,23 @@ class AsIsStateService:
             except Exception as e:
                 logger.error(f"[AS-IS] Error fetching competitors: {e}")
                 competitors = []
+
+        # Fetch tracked keywords from database if missing
+        if not tracked_keywords:
+            try:
+                from Database.models import KeywordUniverseItem
+                db = next(get_db())
+                selected_kws = db.query(KeywordUniverseItem).filter(
+                    KeywordUniverseItem.user_id == user_id,
+                    KeywordUniverseItem.is_selected == True
+                ).order_by(KeywordUniverseItem.score.desc()).limit(20).all()
+                
+                tracked_keywords = [kw.keyword for kw in selected_kws]
+                logger.info(f"[AS-IS] Fetched {len(tracked_keywords)} tracked keywords from database (Fallback)")
+                db.close()
+            except Exception as e:
+                logger.error(f"[AS-IS] Error fetching tracked keywords: {e}")
+                tracked_keywords = []
         
         # Initialize services
         gsc_service = GSCDataService(access_token)
