@@ -218,6 +218,9 @@ class StrategyGoal(Base):
     cycle_end_date = Column(Date, nullable=False)  # 90 days from start
     is_locked = Column(Boolean, default=True)
     
+    # Status (for governance tracking)
+    status = Column(String(20), default='on_track')  # 'on_track', 'paused', 'completed', 'at_risk'
+    
     # Metrics
     baseline_value = Column(String(100), nullable=True)  # Current value at cycle start
     current_value = Column(String(100), nullable=True)   # Updated monthly
@@ -244,7 +247,50 @@ class StrategyGoal(Base):
         CheckConstraint("goal_type IN ('organic-traffic', 'keyword-rankings', 'serp-features', 'avg-position', 'impressions', 'domain-authority')", name='chk_goal_type'),
         CheckConstraint("goal_category IN ('priority', 'additional')", name='chk_goal_category'),
         CheckConstraint("target_type IN ('growth', 'range', 'slabs', 'paused')", name='chk_target_type'),
+        CheckConstraint("status IN ('on_track', 'paused', 'completed', 'at_risk')", name='chk_goal_status'),
     )
+
+
+class GoalMilestone(Base):
+    """Monthly milestones for goal tracking"""
+    __tablename__ = "goal_milestones"
+    
+    id = Column(Integer, primary_key=True)
+    goal_id = Column(Integer, ForeignKey("strategy_goals.id", ondelete="CASCADE"), nullable=False)
+    
+    month_number = Column(Integer, nullable=False)  # 1, 2, or 3
+    target_value = Column(String(100), nullable=False)
+    actual_value = Column(String(100), nullable=True)
+    achieved = Column(Boolean, default=False)
+    recorded_at = Column(TIMESTAMP, nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('goal_id', 'month_number', name='uix_goal_milestone'),
+        CheckConstraint("month_number IN (1, 2, 3)", name='chk_month_number'),
+    )
+
+
+class GoalProgressSnapshot(Base):
+    """Daily/weekly snapshots for goal trend tracking"""
+    __tablename__ = "goal_progress_snapshots"
+    
+    id = Column(Integer, primary_key=True)
+    goal_id = Column(Integer, ForeignKey("strategy_goals.id", ondelete="CASCADE"), nullable=False)
+    
+    snapshot_date = Column(Date, nullable=False)
+    current_value = Column(String(100), nullable=False)
+    progress_percentage = Column(Float, nullable=True)
+    
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('goal_id', 'snapshot_date', name='uix_goal_snapshot'),
+    )
+
+
 
 
 # ==================== AS-IS State Models ====================

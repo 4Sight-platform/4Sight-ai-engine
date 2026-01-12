@@ -163,6 +163,9 @@ class GoalSettingService:
                 # Get baseline value from current metrics
                 baseline_value = current_metrics.get(goal_type, "0")
                 
+                # Determine initial status
+                initial_status = 'paused' if goal_type == 'serp-features' else 'on_track'
+                
                 # Create goal record
                 goal = StrategyGoal(
                     user_id=user_id,
@@ -171,6 +174,7 @@ class GoalSettingService:
                     cycle_start_date=cycle_start,
                     cycle_end_date=cycle_end,
                     is_locked=True,
+                    status=initial_status,
                     baseline_value=baseline_value,
                     current_value=baseline_value,
                     target_value=target_config["value"],
@@ -198,6 +202,9 @@ class GoalSettingService:
                 # Get baseline value
                 baseline_value = current_metrics.get(goal_type, "0")
                 
+                # Determine initial status
+                initial_status = 'paused' if goal_type == 'serp-features' else 'on_track'
+                
                 goal = StrategyGoal(
                     user_id=user_id,
                     goal_type=goal_type,
@@ -205,6 +212,7 @@ class GoalSettingService:
                     cycle_start_date=cycle_start,
                     cycle_end_date=cycle_end,
                     is_locked=True,
+                    status=initial_status,
                     baseline_value=baseline_value,
                     current_value=baseline_value,
                     target_value=config["value"],
@@ -220,6 +228,9 @@ class GoalSettingService:
                 processed_goal_types.add(goal_type)
             
             self.db.commit()
+            
+            # Initialize milestones for each created goal
+            self._initialize_all_milestones(user_id)
             
             logger.info(f"Created {len(created_goals)} goals for user {user_id}: {created_goals}")
             
@@ -627,6 +638,7 @@ class GoalSettingService:
             "cycle_start_date": goal.cycle_start_date.isoformat(),
             "cycle_end_date": goal.cycle_end_date.isoformat(),
             "is_locked": goal.is_locked,
+            "status": goal.status or 'on_track',
             "baseline_value": goal.baseline_value,
             "current_value": goal.current_value,
             "target_value": goal.target_value,
@@ -638,3 +650,91 @@ class GoalSettingService:
             "created_at": goal.created_at.isoformat() if goal.created_at else None,
             "updated_at": goal.updated_at.isoformat() if goal.updated_at else None
         }
+    
+    def _initialize_all_milestones(self, user_id: str) -> None:
+        """Initialize milestones for all newly created goals"""
+        from Database.models import GoalMilestone
+        
+        try:
+            # Get all active goals that don't have milestones yet
+            active_goals = self.db.query(StrategyGoal).filter(
+                StrategyGoal.user_id == user_id,
+                StrategyGoal.is_locked == True
+            ).all()
+            
+            for goal in active_goals:
+                # Check if milestones already exist
+                existing = self.db.query(GoalMilestone).filter(
+                    GoalMilestone.goal_id == goal.id
+                ).first()
+                
+                if existing:
+                    continue
+                
+                # Skip slabs and paused goals - they don't have numeric milestones
+                if goal.target_type in ['slabs', 'paused']:
+                    continue
+                
+                # Calculate milestone targets
+                baseline_num = self._extract_numeric(goal.baseline_value)
+                target_str = goal.target_value
+                
+                # For growth targets like "+500", calculate the increment
+                if target_str.startswith('+'):
+                    target_change = self._extract_numeric(target_str)
+                    final_target = baseline_num + target_change
+                elif target_str.startswith('−') or target_str.startswith('-'):
+                    # Handle range targets like "−3 to −5"
+                    if ' to ' in target_str:
+                        parts = target_str.replace('−', '-').split(' to ')
+                        target_change = abs(self._extract_numeric(parts[0]))
+                    else:
+                        target_change = abs(self._extract_numeric(target_str))
+                    final_target = baseline_num - target_change
+                else:
+                    final_target = baseline_num  # No change
+                    continue
+                
+                # Calculate incremental targets for 3 months
+                increment = (final_target - baseline_num) / 3
+                
+                for month in range(1, 4):
+                    milestone_target_num = baseline_num + (increment * month)
+                    
+                    # Format based on goal type
+                    if goal.goal_type in ['organic-traffic', 'impressions']:
+                        formatted_target = str(int(milestone_target_num))
+                    elif goal.goal_type == 'avg-position':
+                        formatted_target = f"#{milestone_target_num:.1f}"
+                    elif goal.goal_type == 'domain-authority':
+                        formatted_target = str(int(milestone_target_num))
+                    else:
+                        formatted_target = f"{milestone_target_num:.1f}"
+                    
+                    milestone = GoalMilestone(
+                        goal_id=goal.id,
+                        month_number=month,
+                        target_value=formatted_target,
+                        actual_value=None,
+                        achieved=False
+                    )
+                    self.db.add(milestone)
+            
+            self.db.commit()
+            logger.info(f"Initialized milestones for user {user_id}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing milestones for user {user_id}: {str(e)}")
+            # Don't rollback - milestones are optional
+    
+    def _extract_numeric(self, value: str) -> float:
+        """Extract numeric value from string"""
+        if not value:
+            return 0.0
+        # Remove common prefixes/suffixes
+        clean = value.replace('#', '').replace('+', '').replace('−', '-').replace(',', '').replace('%', '').strip()
+        try:
+            return float(clean)
+        except:
+            return 0.0
+

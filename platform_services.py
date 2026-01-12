@@ -2773,3 +2773,41 @@ async def get_governance_goals_cycle(user_id: str) -> StandardResponse:
     finally:
         db.close()
 
+
+@api_router.post(
+    "/governance/goals/snapshot/{user_id}",
+    response_model=StandardResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Governance - Goals"],
+    summary="Capture Goals Snapshot",
+    description="Capture daily snapshot of goal values for trend tracking"
+)
+async def capture_goals_snapshot(user_id: str) -> StandardResponse:
+    """
+    Capture daily snapshot of all active goals for the user.
+    Used for calculating trends and historical tracking.
+    """
+    from Database.database import get_db
+    from governance_dashboard.goals import GovernanceGoalsService
+    
+    db = next(get_db())
+    service = GovernanceGoalsService(db)
+    
+    try:
+        result = service.capture_snapshot(user_id)
+        
+        return StandardResponse(
+            status="success",
+            message=result.get("message", "Snapshot captured"),
+            user_id=user_id,
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"[Governance] Error capturing goals snapshot: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error capturing goals snapshot: {str(e)}"
+        )
+    finally:
+        db.close()
+
