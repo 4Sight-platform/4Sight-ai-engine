@@ -2229,6 +2229,37 @@ async def capture_asis_baseline(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@api_router.get(
+    "/governance/asis/scores/{user_id}",
+    summary="Get As-Is Performance Scores",
+    description="Returns status-based scores for On-Page, Off-Page, and Core Vitals. Scoring: Critical=0, Needs Attention=1, Optimal=2"
+)
+async def get_governance_asis_scores(user_id: str):
+    """
+    Get As-Is Performance scores calculated from status values.
+    
+    Returns percentages calculated as:
+    - Category % = (sum of status scores / max possible) × 100
+    - Overall % = (sum of ALL scores / total max) × 100
+    
+    Each status maps to: Critical=0, Needs Attention=1, Optimal=2
+    """
+    try:
+        from Database.database import get_db
+        db = next(get_db())
+        service = GovernanceAsIsService(db)
+        scores = service.get_asis_performance_scores(user_id)
+        return {
+            "status": "success",
+            "message": "As-Is performance scores retrieved",
+            "user_id": user_id,
+            "data": scores
+        }
+    except Exception as e:
+        logger.error(f"Error fetching as-is performance scores: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.post(
     "/governance/asis/refresh/{user_id}",
     summary="Refresh As-Is Data",

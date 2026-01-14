@@ -1,3 +1,5 @@
+import logging
+import json
 from typing import Dict, List, Optional, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -11,6 +13,142 @@ from Database.models import (
 )
 from asis.asis_service import AsIsStateService
 from Database.database import get_db
+
+
+# ==================== SCORING CONSTANTS ====================
+# Status to numeric score mapping
+STATUS_SCORES = {
+    'critical': 0,
+    'needs-attention': 1,
+    'needs_attention': 1,
+    'optimal': 2
+}
+
+# Parameter structure matching As-Is State frontend
+# Maps category -> parameter_group_id -> list of sub-parameters
+PARAMETER_STRUCTURE = {
+    'onpage': {
+        'page_topic_keyword_targeting': [
+            'target_keyword_presence',
+            'primary_vs_secondary_keyword_mapping',
+            'keyword_cannibalization_signals',
+            'keyword_placement',
+            'keyword_consistency'
+        ],
+        'serp_snippet_optimization': [
+            'title_tag_presence_optimization',
+            'meta_description_presence_quality',
+            'title_meta_duplication',
+            'pixel_length_issues',
+            'ctr_readiness_signals'
+        ],
+        'content_structure_hierarchy': [
+            'h1_presence_uniqueness',
+            'h2_h6_hierarchy',
+            'heading_order_issues',
+            'first_100_words_relevance',
+            'content_sectioning'
+        ],
+        'accessibility_optimization': [
+            'image_alt_text',
+            'image_file_naming',
+            'image_relevance',
+            'lazy_loading_issues',
+            'accessibility_compliance'
+        ],
+        'url_page_signals': [
+            'url_structure',
+            'url_length',
+            'keyword_in_url',
+            'parameterized_urls',
+            'duplicate_urls',
+            'canonical_alignment'
+        ]
+    },
+    'offpage': {
+        'domain_authority_trust': [
+            'referring_domains_count',
+            'authority_score',
+            'spam_score',
+            'follow_vs_nofollow'
+        ],
+        'backlink_relevance': [
+            'referring_domains',
+            'contextual_links',
+            'toxic_score',
+            'irrelevant_link_detection'
+        ],
+        'anchor_text_balance': [
+            'anchor_text_distribution',
+            'exact_match_anchor_frequency'
+        ],
+        'brand_entity_authority': [
+            'unlinked_brand_mentions',
+            'brand_citations',
+            'brand_name_consistency',
+            'industry_mentions'
+        ],
+        'link_growth_stability': [
+            'monthly_link_trend',
+            'link_velocity_spikes',
+            'historical_growth'
+        ]
+    },
+    'technical': {
+        'crawl_indexation': [
+            'xml_sitemap_health',
+            'robots_txt_configuration',
+            'indexed_vs_non_indexed_pages',
+            'crawl_budget_efficiency',
+            'orphan_urls'
+        ],
+        'canonicalization_duplicate': [
+            'canonical_tag_implementation',
+            'duplicate_urls',
+            'http_vs_https_duplicates',
+            'trailing_slash_issues'
+        ],
+        'page_experience_performance': [
+            'lcp_performance',
+            'inp_performance',
+            'cls_stability',
+            'mobile_vs_desktop_cwv'
+        ],
+        'search_rendering_accessibility': [
+            'javascript_rendering_issues',
+            'delayed_lazy_content',
+            'hidden_content',
+            'client_side_rendering_risks',
+            'critical_resource_blocking'
+        ],
+        'ai_llm_crawl': [
+            'llm_txt_presence_rules',
+            'ai_crawler_permissions',
+            'content_usage_signals',
+            'ai_indexing_exposure'
+        ]
+    }
+}
+
+# Human-readable category names
+CATEGORY_DISPLAY_NAMES = {
+    'page_topic_keyword_targeting': 'Page Topic & Keyword Targeting',
+    'serp_snippet_optimization': 'SERP Snippet Optimization',
+    'content_structure_hierarchy': 'Content Structure & Semantic Hierarchy',
+    'accessibility_optimization': 'Accessibility Optimization',
+    'url_page_signals': 'URL & Page Level Signals',
+    'domain_authority_trust': 'Domain Authority & Trust Signals',
+    'backlink_relevance': 'Backlink Relevance & Topic Alignment',
+    'anchor_text_balance': 'Anchor Text Profile & Risk Balance',
+    'brand_entity_authority': 'Brand Mentions & Entity Authority',
+    'link_growth_stability': 'Link Growth Stability',
+    'crawl_indexation': 'Crawl & Indexation',
+    'canonicalization_duplicate': 'Canonicalization & Duplicate Control',
+    'page_experience_performance': 'Page Experience Performance',
+    'search_rendering_accessibility': 'Search Rendering Accessibility',
+    'ai_llm_crawl': 'AI & LLM Crawl'
+}
+
 
 class GovernanceAsIsService(AsIsStateService):
     """
@@ -314,4 +452,214 @@ class GovernanceAsIsService(AsIsStateService):
             change_delta=delta
         )
         self.db.add(event)
+
+    # ==================== STATUS-BASED SCORING METHODS ====================
+    
+    def _status_to_score(self, status: str) -> int:
+        """Convert status string to numeric score (Critical=0, Needs Attention=1, Optimal=2)"""
+        if not status:
+            return 1  # Default to needs-attention if no status
+        normalized = status.lower().replace(' ', '_').replace('-', '_')
+        # Handle 'needs_improvement' as 'needs_attention'
+        if 'needs' in normalized and ('improvement' in normalized or 'attention' in normalized):
+            return 1
+        return STATUS_SCORES.get(normalized, 1)
+    
+    def _get_scores_from_db(self, user_id: str) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        Fetch all AsIsScore entries for the user and build a map of 
+        {parameter_tab: {parameter_group: details_dict}}
         
+        We pull the 'details' JSON which contains the individual sub-parameter assessments.
+        """
+        scores = self.db.query(AsIsScore).filter(
+            AsIsScore.user_id == user_id,
+            AsIsScore.is_baseline == False
+        ).all()
+        
+        result = {}
+        for score in scores:
+            tab = score.parameter_tab
+            group = score.parameter_group
+            
+            if tab not in result:
+                result[tab] = {}
+            
+            # Parse the details JSON to get sub-parameter data
+            details = {}
+            if score.details:
+                try:
+                    # It might be stored as string or already dict depending on ORM/driver
+                    if isinstance(score.details, str):
+                        data = json.loads(score.details)
+                        is_str = True
+                    else:
+                        data = score.details
+                        is_str = False
+                    
+                    # Handle nested details structure which is common (e.g. {group_id:..., details: {...}})
+                    if isinstance(data, dict) and 'details' in data and isinstance(data['details'], dict):
+                        details = data['details']
+                    else:
+                        details = data
+                        
+                except Exception as e:
+                    pass
+            
+            result[tab][group] = details
+            
+        return result
+    
+    def _calculate_category_scores(
+        self, 
+        db_scores: Dict[str, Dict[str, Any]], 
+        category_structure: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """
+        Calculate score for a category implicitly using the formula:
+        Percentage = (Sum of individual sub-parameter scores) / (Total Max Score) * 100
+        
+        Where:
+        - Critical = 0
+        - Needs Attention = 1
+        - Optimal = 2
+        - Max Score per sub-parameter = 2
+        """
+        total_score = 0
+        max_score = 0
+        total_params = 0
+        groups_breakdown = {}
+        
+        for group_id, params in category_structure.items():
+            param_count = len(params)
+            group_max = param_count * 2
+            
+            # Get the detailed sub-parameter data for this group
+            group_details = db_scores.get(group_id, {})
+            
+            group_total_score = 0
+            
+            # Iterate through each EXPECTED sub-parameter for this group
+            for sub_param in params:
+                # Find the specific sub-parameter in the details
+                # The keys in details match the sub-parameter names
+                sub_data = group_details.get(sub_param, {})
+                status = sub_data.get('status', 'needs_improvement')
+                
+                score = self._status_to_score(status)
+                group_total_score += score
+            
+            # Aggregate for category totals
+            total_score += group_total_score
+            max_score += group_max
+            total_params += param_count
+            
+            # Group percentage
+            group_percentage = (group_total_score / group_max * 100) if group_max > 0 else 0
+            
+            # Determine overall group status based on percentage
+            if group_percentage >= 80:
+                group_status = 'optimal'
+            elif group_percentage >= 50:
+                group_status = 'needs_improvement'
+            else:
+                group_status = 'critical'
+            
+            groups_breakdown[group_id] = {
+                'name': CATEGORY_DISPLAY_NAMES.get(group_id, group_id),
+                'score': round(group_percentage, 1),
+                'total_score': group_total_score,
+                'max_score': group_max,
+                'status': group_status,
+                'param_count': param_count
+            }
+        
+        category_percentage = (total_score / max_score * 100) if max_score > 0 else 0
+        
+        return {
+            'score': round(category_percentage, 1),
+            'total_score': total_score,
+            'max_score': max_score,
+            'param_count': total_params,
+            'groups': groups_breakdown
+        }
+    
+    def get_asis_performance_scores(self, user_id: str) -> Dict[str, Any]:
+        """
+        Calculate As-Is Performance scores based on status values.
+        
+        Scoring:
+        - Critical = 0
+        - Needs Attention = 1
+        - Optimal = 2
+        
+        Category % = (sum of scores / max possible) × 100
+        Overall % = (sum of ALL scores / total max) × 100
+        
+        Returns:
+            {
+                'overall_score': percentage,
+                'overall_total_score': sum,
+                'overall_max_score': max,
+                'onpage': {...category breakdown...},
+                'offpage': {...category breakdown...},
+                'technical': {...category breakdown...}  # Core Vitals
+            }
+        """
+        # Fetch status data from DB
+        db_scores = self._get_scores_from_db(user_id)
+        
+        # Calculate scores for each tab
+        onpage_scores = self._calculate_category_scores(
+            db_scores.get('onpage', {}),
+            PARAMETER_STRUCTURE['onpage']
+        )
+        
+        offpage_scores = self._calculate_category_scores(
+            db_scores.get('offpage', {}),
+            PARAMETER_STRUCTURE['offpage']
+        )
+        
+        technical_scores = self._calculate_category_scores(
+            db_scores.get('technical', {}),
+            PARAMETER_STRUCTURE['technical']
+        )
+        
+        # Calculate overall score (NOT averaged, but summed)
+        overall_total = (
+            onpage_scores['total_score'] + 
+            offpage_scores['total_score'] + 
+            technical_scores['total_score']
+        )
+        overall_max = (
+            onpage_scores['max_score'] + 
+            offpage_scores['max_score'] + 
+            technical_scores['max_score']
+        )
+        overall_percentage = (overall_total / overall_max * 100) if overall_max > 0 else 0
+        
+        return {
+            'overall_score': round(overall_percentage, 1),
+            'overall_total_score': overall_total,
+            'overall_max_score': overall_max,
+            'total_param_count': (
+                onpage_scores['param_count'] + 
+                offpage_scores['param_count'] + 
+                technical_scores['param_count']
+            ),
+            'onpage': {
+                'name': 'On-Page SEO',
+                'subtitle': 'Content & Structure',
+                **onpage_scores
+            },
+            'offpage': {
+                'name': 'Off-Page SEO',
+                'subtitle': 'Backlinks & Authority',
+                **offpage_scores
+            },
+            'technical': {
+                'name': 'Core Web Vitals',
+                'subtitle': 'Performance & UX',
+                **technical_scores
+            }
+        }
