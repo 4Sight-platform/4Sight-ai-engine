@@ -39,7 +39,7 @@ def clear_all_tables():
         # Keywords & Strategy
         'keyword_universe_items',
         'keyword_universes',
-        'tracked_keywords',
+
         'keyword_position_snapshots',
         'strategy_goals',
         

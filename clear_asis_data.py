@@ -27,7 +27,7 @@ def clear_asis_data():
         'gsc_daily_metrics',
         
         # Keyword Tracking
-        'tracked_keywords',
+
         'keyword_position_snapshots',
         
         # SERP Features

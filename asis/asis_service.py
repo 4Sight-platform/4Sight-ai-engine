@@ -203,7 +203,7 @@ class AsIsStateService:
                 logger.error(f"[AS-IS] Error fetching competitors: {e}")
                 competitors = []
 
-        # Fetch tracked keywords from database if missing
+        # Fetch tracked keywords from Keyword Universe (Primary Source)
         if not tracked_keywords:
             try:
                 from Database.models import KeywordUniverseItem
@@ -214,7 +214,7 @@ class AsIsStateService:
                 ).order_by(KeywordUniverseItem.score.desc()).limit(20).all()
                 
                 tracked_keywords = [kw.keyword for kw in selected_kws]
-                logger.info(f"[AS-IS] Fetched {len(tracked_keywords)} tracked keywords from database (Fallback)")
+                logger.info(f"[AS-IS] Fetched {len(tracked_keywords)} target keywords from Keyword Universe")
                 db.close()
             except Exception as e:
                 logger.error(f"[AS-IS] Error fetching tracked keywords: {e}")

@@ -317,19 +317,7 @@ class GSCDailyMetrics(Base):
     )
 
 
-class TrackedKeyword(Base):
-    """User's tracked keywords for AS-IS monitoring"""
-    __tablename__ = "tracked_keywords"
-    
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    keyword = Column(String(255), nullable=False)
-    is_tracked = Column(Boolean, default=True)
-    created_at = Column(TIMESTAMP, server_default=func.now())
-    
-    __table_args__ = (
-        UniqueConstraint('user_id', 'keyword', name='uix_tracked_keyword'),
-    )
+
 
 
 class KeywordPositionSnapshot(Base):

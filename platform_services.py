@@ -1052,10 +1052,14 @@ async def submit_keywords_get_competitors(request: Page6KeywordsRequest) -> Page
         google_cse_api_key = os.getenv("GOOGLE_CSE_API_KEY")
         google_cse_cx = os.getenv("GOOGLE_CSE_CX")
         
-        if not google_cse_api_key or not google_cse_cx:
+        # Get Fallback Keys
+        serp_api_key = os.getenv("SERP_API_KEY")
+        serper_api_key = os.getenv("SERPER_API_KEY")
+        
+        if not ((google_cse_api_key and google_cse_cx) or serp_api_key or serper_api_key):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Google Custom Search not configured"
+                detail="No competitor analysis APIs configured (CSE, SerpApi, or Serper)"
             )
         
         # Load profile for location and website
@@ -1072,7 +1076,9 @@ async def submit_keywords_get_competitors(request: Page6KeywordsRequest) -> Page
             final_top_competitors=10,
             location=profile.get("location_scope", "India"),
             language="en",
-            min_similarity=0.10  # 10% similarity threshold
+            min_similarity=0.10,  # 10% similarity threshold
+            serp_api_key=serp_api_key,
+            serper_api_key=serper_api_key
         )
         
         # Save suggested competitors to profile (not final, just suggestions)
@@ -1138,18 +1144,33 @@ async def submit_final_competitors(request: Page6CompetitorsRequest) -> Standard
         
         # Prepare final competitor list
         final_competitors = []
+
+        logger.info(f"[Page 6 Step 2] Fetching suggested competitors from profile. Count: {len(suggested_competitors)}")
+        logger.debug(f"[Page 6 Step 2] Request selected competitors: {request.selected_competitors}")
         
         # Add selected competitors from suggestions
         for domain in request.selected_competitors:
             # Find in suggested list
             matched = next((c for c in suggested_competitors if c["domain"] == domain), None)
+            
             if matched:
+                logger.info(f"[Page 6 Step 2] Match found for: {domain}")
                 final_competitors.append({
                     "domain": matched["domain"],
                     "source": "DISCOVERED",
                     "importance": matched.get("importance"),
                     "priority": matched.get("priority"),
                     "keywords_matched": matched.get("keywords_matched", [])
+                })
+            else:
+                logger.warning(f"[Page 6 Step 2] NO MATCH found for selected domain: {domain} in suggested list: {[c['domain'] for c in suggested_competitors]}")
+
+                final_competitors.append({
+                    "domain": domain,
+                    "source": "DISCOVERED_FALLBACK",
+                    "importance": None,
+                    "priority": None,
+                    "keywords_matched": []
                 })
         
         # Add manual competitors

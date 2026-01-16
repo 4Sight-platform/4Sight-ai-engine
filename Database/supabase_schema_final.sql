@@ -1,19 +1,20 @@
--- 4Sight Platform - Complete PostgreSQL Schema
--- Version 2.0 - Email-based UUID + Separated Products/Services
+-- 4Sight Platform - Complete Supabase PostgreSQL Schema
+-- Consolidate Schema Version
+-- Generated for Supabase Migration
 
 -- ============================================
 -- DATABASE SETUP
 -- ============================================
 
-CREATE DATABASE foursight_platform;
-\c foursight_platform;
+-- Note: Supabase creates the database for you. 
+-- We will proceed with creating tables in the public schema.
 
 -- ============================================
 -- CORE TABLES
 -- ============================================
 
 -- 1. users - User Accounts (Email-based UUID)
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     -- Primary Identity (from email hash)
     id VARCHAR(50) PRIMARY KEY,  -- user_abc123def456
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -45,14 +46,14 @@ CREATE TABLE users (
     CONSTRAINT chk_account_type CHECK (account_type IN ('standard', 'oauth'))
 );
 
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_username ON users(username);
-CREATE INDEX idx_users_google_id ON users(google_user_id);
-CREATE INDEX idx_users_created_at ON users(created_at);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_user_id);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
 
 
 -- 2. oauth_tokens - OAuth Token Storage
-CREATE TABLE oauth_tokens (
+CREATE TABLE IF NOT EXISTS oauth_tokens (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -71,11 +72,11 @@ CREATE TABLE oauth_tokens (
     UNIQUE(user_id, provider)
 );
 
-CREATE INDEX idx_oauth_tokens_user_id ON oauth_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user_id ON oauth_tokens(user_id);
 
 
 -- 3. email_verification_tokens
-CREATE TABLE email_verification_tokens (
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(255) UNIQUE NOT NULL,
@@ -85,12 +86,12 @@ CREATE TABLE email_verification_tokens (
     CONSTRAINT chk_token_expiry CHECK (expires_at > created_at)
 );
 
-CREATE INDEX idx_email_verification_token ON email_verification_tokens(token);
-CREATE INDEX idx_email_verification_user_id ON email_verification_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_verification_token ON email_verification_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_email_verification_user_id ON email_verification_tokens(user_id);
 
 
 -- 4. password_reset_tokens
-CREATE TABLE password_reset_tokens (
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(255) UNIQUE NOT NULL,
@@ -101,8 +102,8 @@ CREATE TABLE password_reset_tokens (
     CONSTRAINT chk_token_expiry CHECK (expires_at > created_at)
 );
 
-CREATE INDEX idx_password_reset_token ON password_reset_tokens(token);
-CREATE INDEX idx_password_reset_user_id ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_token ON password_reset_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user_id ON password_reset_tokens(user_id);
 
 
 -- ============================================
@@ -110,7 +111,7 @@ CREATE INDEX idx_password_reset_user_id ON password_reset_tokens(user_id);
 -- ============================================
 
 -- 5. business_profiles - Page 1
-CREATE TABLE business_profiles (
+CREATE TABLE IF NOT EXISTS business_profiles (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -124,11 +125,11 @@ CREATE TABLE business_profiles (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_business_profiles_user_id ON business_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_business_profiles_user_id ON business_profiles(user_id);
 
 
 -- 6. integrations - Page 2
-CREATE TABLE integrations (
+CREATE TABLE IF NOT EXISTS integrations (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -149,11 +150,11 @@ CREATE TABLE integrations (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_integrations_user_id ON integrations(user_id);
+CREATE INDEX IF NOT EXISTS idx_integrations_user_id ON integrations(user_id);
 
 
 -- 7. audience_profiles - Page 3
-CREATE TABLE audience_profiles (
+CREATE TABLE IF NOT EXISTS audience_profiles (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -174,11 +175,11 @@ CREATE TABLE audience_profiles (
     CONSTRAINT chk_search_intent_count CHECK (array_length(search_intent, 1) BETWEEN 1 AND 2)
 );
 
-CREATE INDEX idx_audience_profiles_user_id ON audience_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_audience_profiles_user_id ON audience_profiles(user_id);
 
 
 -- 8. products - Page 4 (Individual Products)
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -191,11 +192,11 @@ CREATE TABLE products (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_products_user_id ON products(user_id);
+CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 
 
 -- 9. services - Page 4 (Individual Services)
-CREATE TABLE services (
+CREATE TABLE IF NOT EXISTS services (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -208,11 +209,11 @@ CREATE TABLE services (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_services_user_id ON services(user_id);
+CREATE INDEX IF NOT EXISTS idx_services_user_id ON services(user_id);
 
 
 -- 10. differentiators - Page 4 (Business Differentiators)
-CREATE TABLE differentiators (
+CREATE TABLE IF NOT EXISTS differentiators (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -223,11 +224,11 @@ CREATE TABLE differentiators (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_differentiators_user_id ON differentiators(user_id);
+CREATE INDEX IF NOT EXISTS idx_differentiators_user_id ON differentiators(user_id);
 
 
 -- 11. seo_goals - Page 5
-CREATE TABLE seo_goals (
+CREATE TABLE IF NOT EXISTS seo_goals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -238,11 +239,11 @@ CREATE TABLE seo_goals (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_seo_goals_user_id ON seo_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_seo_goals_user_id ON seo_goals(user_id);
 
 
 -- 12. onboarding_keywords - Page 6
-CREATE TABLE onboarding_keywords (
+CREATE TABLE IF NOT EXISTS onboarding_keywords (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -261,12 +262,12 @@ CREATE TABLE onboarding_keywords (
     CONSTRAINT chk_keyword_source CHECK (source IN ('generated', 'custom'))
 );
 
-CREATE INDEX idx_onboarding_keywords_user_id ON onboarding_keywords(user_id);
-CREATE INDEX idx_onboarding_keywords_selected ON onboarding_keywords(user_id, is_selected);
+CREATE INDEX IF NOT EXISTS idx_onboarding_keywords_user_id ON onboarding_keywords(user_id);
+CREATE INDEX IF NOT EXISTS idx_onboarding_keywords_selected ON onboarding_keywords(user_id, is_selected);
 
 
 -- 13. onboarding_competitors - Page 6
-CREATE TABLE onboarding_competitors (
+CREATE TABLE IF NOT EXISTS onboarding_competitors (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -288,12 +289,12 @@ CREATE TABLE onboarding_competitors (
     CONSTRAINT chk_competitor_source CHECK (source IN ('suggested', 'manual'))
 );
 
-CREATE INDEX idx_onboarding_competitors_user_id ON onboarding_competitors(user_id);
-CREATE INDEX idx_onboarding_competitors_selected ON onboarding_competitors(user_id, is_selected);
+CREATE INDEX IF NOT EXISTS idx_onboarding_competitors_user_id ON onboarding_competitors(user_id);
+CREATE INDEX IF NOT EXISTS idx_onboarding_competitors_selected ON onboarding_competitors(user_id, is_selected);
 
 
 -- 14. page_urls - Page 7
-CREATE TABLE page_urls (
+CREATE TABLE IF NOT EXISTS page_urls (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -309,11 +310,11 @@ CREATE TABLE page_urls (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_page_urls_user_id ON page_urls(user_id);
+CREATE INDEX IF NOT EXISTS idx_page_urls_user_id ON page_urls(user_id);
 
 
 -- 15. reporting_preferences - Page 8
-CREATE TABLE reporting_preferences (
+CREATE TABLE IF NOT EXISTS reporting_preferences (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -326,7 +327,7 @@ CREATE TABLE reporting_preferences (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_reporting_preferences_user_id ON reporting_preferences(user_id);
+CREATE INDEX IF NOT EXISTS idx_reporting_preferences_user_id ON reporting_preferences(user_id);
 
 
 -- ============================================
@@ -334,7 +335,7 @@ CREATE INDEX idx_reporting_preferences_user_id ON reporting_preferences(user_id)
 -- ============================================
 
 -- 16. keyword_universes - Keyword Planner Lock Status
-CREATE TABLE keyword_universes (
+CREATE TABLE IF NOT EXISTS keyword_universes (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     
@@ -352,11 +353,11 @@ CREATE TABLE keyword_universes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_keyword_universes_user_id ON keyword_universes(user_id);
+CREATE INDEX IF NOT EXISTS idx_keyword_universes_user_id ON keyword_universes(user_id);
 
 
 -- 17. keyword_universe_items - Keyword Planner Keywords
-CREATE TABLE keyword_universe_items (
+CREATE TABLE IF NOT EXISTS keyword_universe_items (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -385,12 +386,12 @@ CREATE TABLE keyword_universe_items (
     CONSTRAINT chk_source CHECK (source IN ('verified', 'generated', 'custom'))
 );
 
-CREATE INDEX idx_keyword_universe_items_user_id ON keyword_universe_items(user_id);
-CREATE INDEX idx_keyword_universe_items_selected ON keyword_universe_items(user_id, is_selected);
+CREATE INDEX IF NOT EXISTS idx_keyword_universe_items_user_id ON keyword_universe_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_keyword_universe_items_selected ON keyword_universe_items(user_id, is_selected);
 
 
 -- 18. strategy_goals - Goal Setting & Tracking
-CREATE TABLE strategy_goals (
+CREATE TABLE IF NOT EXISTS strategy_goals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -402,6 +403,9 @@ CREATE TABLE strategy_goals (
     cycle_start_date DATE NOT NULL,
     cycle_end_date DATE NOT NULL,  -- 90 days from start
     is_locked BOOLEAN DEFAULT TRUE,
+    
+    -- Status (for governance tracking)
+    status VARCHAR(20) DEFAULT 'on_track',  -- 'on_track', 'paused', 'completed', 'at_risk'
     
     -- Metrics
     baseline_value VARCHAR(100) NULL,  -- Current value at cycle start
@@ -429,20 +433,54 @@ CREATE TABLE strategy_goals (
         'avg-position', 'impressions', 'domain-authority'
     )),
     CONSTRAINT chk_goal_category CHECK (goal_category IN ('priority', 'additional')),
-    CONSTRAINT chk_target_type CHECK (target_type IN ('growth', 'range', 'slabs', 'paused'))
+    CONSTRAINT chk_target_type CHECK (target_type IN ('growth', 'range', 'slabs', 'paused')),
+    CONSTRAINT chk_goal_status CHECK (status IN ('on_track', 'paused', 'completed', 'at_risk'))
 );
 
-CREATE INDEX idx_strategy_goals_user ON strategy_goals(user_id);
-CREATE INDEX idx_strategy_goals_cycle ON strategy_goals(user_id, cycle_start_date);
-CREATE INDEX idx_strategy_goals_active ON strategy_goals(user_id, is_locked) WHERE is_locked = TRUE;
+CREATE INDEX IF NOT EXISTS idx_strategy_goals_user ON strategy_goals(user_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_goals_cycle ON strategy_goals(user_id, cycle_start_date);
+CREATE INDEX IF NOT EXISTS idx_strategy_goals_active ON strategy_goals(user_id, is_locked) WHERE is_locked = TRUE;
+
+
+-- 19. goal_milestones - Monthly milestones for goal tracking
+CREATE TABLE IF NOT EXISTS goal_milestones (
+    id SERIAL PRIMARY KEY,
+    goal_id INTEGER NOT NULL REFERENCES strategy_goals(id) ON DELETE CASCADE,
+    month_number INTEGER NOT NULL CHECK (month_number IN (1, 2, 3)),
+    target_value VARCHAR(100) NOT NULL,
+    actual_value VARCHAR(100),
+    achieved BOOLEAN DEFAULT FALSE,
+    recorded_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(goal_id, month_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_milestones_goal_id ON goal_milestones(goal_id);
+
+
+-- 20. goal_progress_snapshots - Daily/weekly snapshots for goal trends
+CREATE TABLE IF NOT EXISTS goal_progress_snapshots (
+    id SERIAL PRIMARY KEY,
+    goal_id INTEGER NOT NULL REFERENCES strategy_goals(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL,
+    current_value VARCHAR(100) NOT NULL,
+    progress_percentage FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(goal_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_snapshots_goal_id ON goal_progress_snapshots(goal_id);
+CREATE INDEX IF NOT EXISTS idx_goal_snapshots_date ON goal_progress_snapshots(snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_goal_snapshots_goal_date ON goal_progress_snapshots(goal_id, snapshot_date DESC);
 
 
 -- ============================================
--- AS-IS STATE TABLES (13 tables)
+-- AS-IS STATE TABLES
 -- ============================================
 
--- 18. gsc_daily_metrics - GSC data snapshots
-CREATE TABLE gsc_daily_metrics (
+-- 21. gsc_daily_metrics - GSC data snapshots
+CREATE TABLE IF NOT EXISTS gsc_daily_metrics (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     snapshot_date DATE NOT NULL,
@@ -457,14 +495,14 @@ CREATE TABLE gsc_daily_metrics (
     CONSTRAINT uix_gsc_metrics UNIQUE (user_id, snapshot_date, period_type, metric_type, query_or_page)
 );
 
-CREATE INDEX idx_gsc_metrics_user_date ON gsc_daily_metrics(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_gsc_metrics_user_date ON gsc_daily_metrics(user_id, snapshot_date);
 
 
 
 
 
--- 20. keyword_position_snapshots - Position history
-CREATE TABLE keyword_position_snapshots (
+-- 23. keyword_position_snapshots - Position history
+CREATE TABLE IF NOT EXISTS keyword_position_snapshots (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     keyword VARCHAR(255) NOT NULL,
@@ -478,11 +516,11 @@ CREATE TABLE keyword_position_snapshots (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_keyword_snapshots_user ON keyword_position_snapshots(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_keyword_snapshots_user ON keyword_position_snapshots(user_id, snapshot_date);
 
 
--- 21. serp_feature_presence - SERP features per keyword
-CREATE TABLE serp_feature_presence (
+-- 24. serp_feature_presence - SERP features per keyword
+CREATE TABLE IF NOT EXISTS serp_feature_presence (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     keyword VARCHAR(255) NOT NULL,
@@ -492,11 +530,11 @@ CREATE TABLE serp_feature_presence (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_serp_features_user ON serp_feature_presence(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_serp_features_user ON serp_feature_presence(user_id, snapshot_date);
 
 
--- 22. competitor_visibility_scores - Competitor rankings
-CREATE TABLE competitor_visibility_scores (
+-- 25. competitor_visibility_scores - Competitor rankings
+CREATE TABLE IF NOT EXISTS competitor_visibility_scores (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     competitor_domain VARCHAR(255) NOT NULL,
@@ -507,11 +545,11 @@ CREATE TABLE competitor_visibility_scores (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_competitor_scores_user ON competitor_visibility_scores(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_competitor_scores_user ON competitor_visibility_scores(user_id, snapshot_date);
 
 
--- 23. crawl_pages - Crawled page metadata
-CREATE TABLE crawl_pages (
+-- 26. crawl_pages - Crawled page metadata
+CREATE TABLE IF NOT EXISTS crawl_pages (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     page_url VARCHAR(500) NOT NULL,
@@ -523,11 +561,11 @@ CREATE TABLE crawl_pages (
     CONSTRAINT uix_crawl_page UNIQUE (user_id, page_url)
 );
 
-CREATE INDEX idx_crawl_pages_user ON crawl_pages(user_id);
+CREATE INDEX IF NOT EXISTS idx_crawl_pages_user ON crawl_pages(user_id);
 
 
--- 24. onpage_signals - On-page SEO signals
-CREATE TABLE onpage_signals (
+-- 27. onpage_signals - On-page SEO signals
+CREATE TABLE IF NOT EXISTS onpage_signals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     page_url VARCHAR(500) NOT NULL,
@@ -559,11 +597,11 @@ CREATE TABLE onpage_signals (
     CONSTRAINT uix_onpage_signal UNIQUE (user_id, page_url)
 );
 
-CREATE INDEX idx_onpage_signals_user ON onpage_signals(user_id);
+CREATE INDEX IF NOT EXISTS idx_onpage_signals_user ON onpage_signals(user_id);
 
 
--- 25. backlink_signals - Backlink data
-CREATE TABLE backlink_signals (
+-- 28. backlink_signals - Backlink data
+CREATE TABLE IF NOT EXISTS backlink_signals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     referring_domains INTEGER DEFAULT 0,
@@ -577,8 +615,8 @@ CREATE TABLE backlink_signals (
 );
 
 
--- 26. technical_signals - Technical SEO signals
-CREATE TABLE technical_signals (
+-- 29. technical_signals - Technical SEO signals
+CREATE TABLE IF NOT EXISTS technical_signals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     indexed_pages INTEGER DEFAULT 0,
@@ -601,8 +639,8 @@ CREATE TABLE technical_signals (
 );
 
 
--- 27. cwv_signals - Core Web Vitals
-CREATE TABLE cwv_signals (
+-- 30. cwv_signals - Core Web Vitals
+CREATE TABLE IF NOT EXISTS cwv_signals (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     url_group VARCHAR(500) DEFAULT 'site-wide',
@@ -621,11 +659,11 @@ CREATE TABLE cwv_signals (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_cwv_signals_user ON cwv_signals(user_id);
+CREATE INDEX IF NOT EXISTS idx_cwv_signals_user ON cwv_signals(user_id);
 
 
--- 28. ai_crawl_governance - AI crawler rules
-CREATE TABLE ai_crawl_governance (
+-- 31. ai_crawl_governance - AI crawler rules
+CREATE TABLE IF NOT EXISTS ai_crawl_governance (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     robots_ai_rules TEXT NULL,
@@ -639,8 +677,8 @@ CREATE TABLE ai_crawl_governance (
 );
 
 
--- 29. as_is_scores - Parameter scores
-CREATE TABLE as_is_scores (
+-- 32. as_is_scores - Parameter scores
+CREATE TABLE IF NOT EXISTS as_is_scores (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     parameter_tab VARCHAR(20) NOT NULL,
@@ -648,6 +686,8 @@ CREATE TABLE as_is_scores (
     sub_parameter VARCHAR(100) NULL,
     score FLOAT DEFAULT 0.0,
     max_score FLOAT DEFAULT 100.0,
+    baseline_score FLOAT DEFAULT NULL, -- Added from migration
+    is_baseline BOOLEAN DEFAULT FALSE,   -- Added from migration
     status VARCHAR(20) NOT NULL,
     details TEXT NULL,
     recommendation TEXT NULL,
@@ -657,11 +697,12 @@ CREATE TABLE as_is_scores (
     CONSTRAINT uix_asis_score UNIQUE (user_id, parameter_tab, parameter_group, sub_parameter, snapshot_date)
 );
 
-CREATE INDEX idx_asis_scores_user ON as_is_scores(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_asis_scores_user ON as_is_scores(user_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS idx_asis_baseline ON as_is_scores(user_id, is_baseline, snapshot_date);
 
 
--- 30. as_is_summary_cache - Summary card cache (complete data storage)
-CREATE TABLE as_is_summary_cache (
+-- 33. as_is_summary_cache - Summary card cache (complete data storage)
+CREATE TABLE IF NOT EXISTS as_is_summary_cache (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -688,14 +729,14 @@ CREATE TABLE as_is_summary_cache (
     serp_features_detail JSONB NULL,      -- SERP features with status
     
     -- Baseline fields (for lock period)
-    baseline_total_clicks INTEGER NULL,
-    baseline_total_impressions INTEGER NULL,
-    baseline_avg_position FLOAT NULL,
-    baseline_top10_keywords INTEGER NULL,
-    baseline_features_count INTEGER NULL,
-    baseline_your_rank INTEGER NULL,
-    baseline_visibility_score FLOAT NULL,
-    baseline_captured_at TIMESTAMP NULL,
+    baseline_total_clicks INTEGER,
+    baseline_total_impressions INTEGER,
+    baseline_avg_position FLOAT,
+    baseline_top10_keywords INTEGER,
+    baseline_features_count INTEGER,
+    baseline_your_rank INTEGER,
+    baseline_visibility_score FLOAT,
+    baseline_captured_at TIMESTAMP,
     
     -- Domain Authority (for Goal Setting)
     domain_authority INTEGER DEFAULT 0,
@@ -705,15 +746,45 @@ CREATE TABLE as_is_summary_cache (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_as_is_summary_full_summary ON as_is_summary_cache USING GIN (full_summary);
+CREATE INDEX IF NOT EXISTS idx_as_is_summary_full_summary ON as_is_summary_cache USING GIN (full_summary);
+
+
+-- 34. asis_progress_timeline - Timeline of performance changes and improvements
+CREATE TABLE IF NOT EXISTS asis_progress_timeline (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Event Information
+    event_type VARCHAR(50) NOT NULL,  -- 'score_improvement', 'metric_change', 'milestone', etc.
+    event_title VARCHAR(500) NOT NULL,
+    event_description TEXT NULL,
+    
+    -- Categorization
+    category VARCHAR(20) NULL,  -- 'onpage', 'offpage', 'technical', 'overall'
+    parameter_group VARCHAR(100) NULL,
+    
+    -- Metrics
+    metric_name VARCHAR(100) NULL,
+    old_value FLOAT NULL,
+    new_value FLOAT NULL,
+    change_delta FLOAT NULL,
+    
+    -- Timestamp
+    event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT chk_event_type CHECK (event_type IN ('score_improvement', 'score_decline', 'metric_change', 'milestone', 'baseline_captured'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_timeline_user ON asis_progress_timeline(user_id, event_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_timeline_category ON asis_progress_timeline(user_id, category);
 
 
 -- ============================================
--- ACTION PLAN TABLES (3 tables)
+-- ACTION PLAN TABLES
 -- ============================================
 
--- 31. action_plan_tasks - SEO action plan tasks
-CREATE TABLE action_plan_tasks (
+-- 35. action_plan_tasks - SEO action plan tasks
+CREATE TABLE IF NOT EXISTS action_plan_tasks (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -756,14 +827,14 @@ CREATE TABLE action_plan_tasks (
     CONSTRAINT chk_effort CHECK (effort_description IN ('Low', 'Medium', 'High'))
 );
 
-CREATE INDEX idx_action_plan_tasks_user ON action_plan_tasks(user_id);
-CREATE INDEX idx_action_plan_tasks_category ON action_plan_tasks(user_id, category);
-CREATE INDEX idx_action_plan_tasks_priority ON action_plan_tasks(user_id, priority);
-CREATE INDEX idx_action_plan_tasks_status ON action_plan_tasks(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_action_plan_tasks_user ON action_plan_tasks(user_id);
+CREATE INDEX IF NOT EXISTS idx_action_plan_tasks_category ON action_plan_tasks(user_id, category);
+CREATE INDEX IF NOT EXISTS idx_action_plan_tasks_priority ON action_plan_tasks(user_id, priority);
+CREATE INDEX IF NOT EXISTS idx_action_plan_tasks_status ON action_plan_tasks(user_id, status);
 
 
--- 32. action_plan_task_pages - Junction table for task-page relationships
-CREATE TABLE action_plan_task_pages (
+-- 36. action_plan_task_pages - Junction table for task-page relationships
+CREATE TABLE IF NOT EXISTS action_plan_task_pages (
     id SERIAL PRIMARY KEY,
     task_id INTEGER NOT NULL REFERENCES action_plan_tasks(id) ON DELETE CASCADE,
     page_url VARCHAR(500) NOT NULL,
@@ -776,12 +847,12 @@ CREATE TABLE action_plan_task_pages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_task_pages_task ON action_plan_task_pages(task_id);
-CREATE INDEX idx_task_pages_url ON action_plan_task_pages(page_url);
+CREATE INDEX IF NOT EXISTS idx_task_pages_task ON action_plan_task_pages(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_pages_url ON action_plan_task_pages(page_url);
 
 
--- 33. action_plan_task_history - Audit trail for task status changes
-CREATE TABLE action_plan_task_history (
+-- 37. action_plan_task_history - Audit trail for task status changes
+CREATE TABLE IF NOT EXISTS action_plan_task_history (
     id SERIAL PRIMARY KEY,
     task_id INTEGER NOT NULL REFERENCES action_plan_tasks(id) ON DELETE CASCADE,
     
@@ -799,10 +870,11 @@ CREATE TABLE action_plan_task_history (
     CONSTRAINT chk_new_status CHECK (new_status IN ('not_started', 'in_progress', 'completed'))
 );
 
-CREATE INDEX idx_task_history_task ON action_plan_task_history(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_history_task ON action_plan_task_history(task_id);
 
--- 35. action_plan_progress_snapshots - Historical tracking for governance
-CREATE TABLE action_plan_progress_snapshots (
+
+-- 38. action_plan_progress_snapshots - Historical tracking for governance
+CREATE TABLE IF NOT EXISTS action_plan_progress_snapshots (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
@@ -821,10 +893,12 @@ CREATE TABLE action_plan_progress_snapshots (
     onpage_completed INTEGER DEFAULT 0,
     onpage_percentage FLOAT DEFAULT 0.0,
     
+    -- Category Breakdown
     offpage_total INTEGER DEFAULT 0,
     offpage_completed INTEGER DEFAULT 0,
     offpage_percentage FLOAT DEFAULT 0.0,
     
+    -- Category Breakdown
     technical_total INTEGER DEFAULT 0,
     technical_completed INTEGER DEFAULT 0,
     technical_percentage FLOAT DEFAULT 0.0,
@@ -837,69 +911,7 @@ CREATE TABLE action_plan_progress_snapshots (
     CONSTRAINT uix_user_snapshot_date UNIQUE (user_id, snapshot_date)
 );
 
-CREATE INDEX idx_action_plan_progress_user ON action_plan_progress_snapshots(user_id);
-CREATE INDEX idx_action_plan_progress_cycle ON action_plan_progress_snapshots(user_id, cycle_start_date);
-CREATE INDEX idx_action_plan_progress_baseline ON action_plan_progress_snapshots(user_id, is_baseline) WHERE is_baseline = TRUE;
+CREATE INDEX IF NOT EXISTS idx_action_plan_progress_user ON action_plan_progress_snapshots(user_id);
+CREATE INDEX IF NOT EXISTS idx_action_plan_progress_cycle ON action_plan_progress_snapshots(user_id, cycle_start_date);
+CREATE INDEX IF NOT EXISTS idx_action_plan_progress_baseline ON action_plan_progress_snapshots(user_id, is_baseline) WHERE is_baseline = TRUE;
 
-
--- ============================================
--- SUMMARY
--- ============================================
-
-/*
-COMPLETE SCHEMA SUMMARY - 35 TABLES TOTAL
-
-
-CORE AUTH & USERS (4 tables)
-1. users (email-based UUID)
-2. oauth_tokens
-3. email_verification_tokens
-4. password_reset_tokens
-
-ONBOARDING DATA (11 tables)
-5. business_profiles (Page 1)
-6. integrations (Page 2)
-7. audience_profiles (Page 3)
-8. products (Page 4)
-9. services (Page 4)
-10. differentiators (Page 4)
-11. seo_goals (Page 5)
-12. onboarding_keywords (Page 6)
-13. onboarding_competitors (Page 6)
-14. page_urls (Page 7)
-15. reporting_preferences (Page 8)
-
-STRATEGY DASHBOARD (3 tables)
-16. keyword_universes
-17. keyword_universe_items
-18. strategy_goals
-
-AS-IS STATE (13 tables)
-19. gsc_daily_metrics
-20. tracked_keywords
-21. keyword_position_snapshots
-22. serp_feature_presence
-23. competitor_visibility_scores
-24. crawl_pages
-25. onpage_signals
-26. backlink_signals
-27. technical_signals
-28. cwv_signals
-29. ai_crawl_governance
-30. as_is_scores
-31. as_is_summary_cache
-
-ACTION PLAN (3 tables)
-32. action_plan_tasks
-33. action_plan_task_pages
-34. action_plan_task_history
-
-KEY DESIGN DECISIONS:
-- user_id = VARCHAR(50) from email hash (e.g., user_abc123def456)
-- username field ready for frontend
-- full_name field ready for frontend
-- Products & Services as separate rows (not arrays)
-- Password NULL until onboarding complete
-- credentials_sent flag for email tracking
-- strategy_goals tracks 90-day goal cycles with hardcoded targets
-*/

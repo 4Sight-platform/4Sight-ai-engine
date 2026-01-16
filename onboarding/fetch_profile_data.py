@@ -8,7 +8,7 @@ from Database.database import SessionLocal
 from Database.models import (
     User, BusinessProfile, Integrations, Products, Services, Differentiators,
     AudienceProfile, SeoGoal, OnboardingKeyword, OnboardingCompetitor, 
-    PageUrl, ReportingPreference
+    PageUrl, ReportingPreference, KeywordUniverseItem
 )
 # Import other models as needed
 
@@ -239,6 +239,29 @@ class ProfileManager:
                         )
                         db.add(c)
 
+            # Handle Final Competitors (Confirmation Step)
+            if 'final_competitors' in updates and isinstance(updates['final_competitors'], list):
+                # Replace all competitors with the final confirmed list
+                db.query(OnboardingCompetitor).filter(OnboardingCompetitor.user_id == user_id).delete()
+                
+                for comp in updates['final_competitors']:
+                    if isinstance(comp, dict):
+                        c_url = comp.get('domain') or comp.get('url') or ''
+                        c_name = comp.get('name') or comp.get('title') or ''
+                        
+                        if not c_url: continue
+                        
+                        c = OnboardingCompetitor(
+                            user_id=user_id,
+                            competitor_url=c_url,
+                            competitor_name=c_name,
+                            source='manual', 
+                            is_selected=True,
+                            keywords_matched=comp.get('keywords_matched', [])
+                        )
+                        db.add(c)
+
+
             db.commit()
             logger.info(f"Updated profile for user: {user_id}")
             
@@ -419,6 +442,40 @@ class ProfileManager:
                 user.onboarding_completed = True
                 db.commit()
                 logger.info(f"Marked onboarding complete for user: {user_id}")
+                
+                # Promote Keywords to Universe
+                try:
+                    # 1. Check if universe is already populated (idempotency)
+                    existing_universe_count = db.query(KeywordUniverseItem).filter(KeywordUniverseItem.user_id == user_id).count()
+                    
+                    if existing_universe_count == 0:
+                        # 2. Get selected onboarding keywords
+                        selected_kws = db.query(OnboardingKeyword).filter(
+                            OnboardingKeyword.user_id == user_id, 
+                            OnboardingKeyword.is_selected == True
+                        ).all()
+                        
+                        # 3. Copy to KeywordUniverseItem
+                        for kw in selected_kws:
+                            kui = KeywordUniverseItem(
+                                user_id=user_id,
+                                keyword=kw.keyword,
+                                search_volume=0, 
+                                difficulty='Medium',
+                                intent='Informational',
+                                keyword_type='Long-tail',
+                                source=kw.source or 'generated',
+                                score=kw.score,
+                                is_selected=True
+                            )
+                            db.add(kui)
+                        
+                        db.commit()
+                        logger.info(f"Promoted {len(selected_kws)} keywords to KeywordUniverseItem for user: {user_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error promoting keywords to universe: {e}")
+
             else:
                 logger.warning(f"User not found when marking complete: {user_id}")
         except SQLAlchemyError as e:

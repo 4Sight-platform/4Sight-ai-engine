@@ -308,94 +308,134 @@ def calculate_similarity(text1: str, text2: str) -> float:
 
 # ==================== SERP Fetching ====================
 
-class GoogleCSEFetcher:
-    """
-    Google Custom Search Engine fetcher for SERP results.
-    """
-    
+class BaseFetcher:
+    """Base class for SERP fetchers"""
+    async def search(self, keyword: str, num_results: int, location: str, language: str) -> List[Dict]:
+        raise NotImplementedError
+
+
+class GoogleCSEFetcher(BaseFetcher):
+    """Google Custom Search Engine fetcher"""
     BASE_URL = "https://www.googleapis.com/customsearch/v1"
     
     def __init__(self, api_key: str, cx: str):
         self.api_key = api_key
         self.cx = cx
     
-    def is_configured(self) -> bool:
-        return bool(self.api_key and self.cx)
-    
-    async def search(
-        self,
-        keyword: str,
-        num_results: int = 10,
-        location: str = "India",
-        language: str = "en"
-    ) -> List[Dict[str, any]]:
-        """
-        Fetch SERP results for a keyword.
-        
-        Returns:
-            List of {"rank": int, "url": str, "domain": str, "title": str, "snippet": str}
-        """
-        if not self.is_configured():
-            raise ValueError("Google CSE not configured (missing API key or CX)")
-        
-        # Google CSE returns max 10 results per request
+    async def search(self, keyword: str, num_results: int = 10, location: str = "India", language: str = "en") -> List[Dict]:
+        if not self.api_key or not self.cx:
+            raise ValueError("Google CSE not configured")
+            
         num = min(num_results, 10)
-        
         params = {
             "key": self.api_key,
             "cx": self.cx,
             "q": keyword,
             "num": num,
             "hl": language,
-            "gl": self._map_location_to_country_code(location),
+            "gl": self._map_location(location),
         }
         
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(self.BASE_URL, params=params)
-                response.raise_for_status()
-                data = response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"[SERP] Google CSE API error: {e.response.status_code}")
-            raise
-        except httpx.RequestError as e:
-            logger.error(f"[SERP] Request failed: {e}")
-            raise
-        
-        results = []
-        items = data.get("items", [])
-        
-        for idx, item in enumerate(items, start=1):
-            url = item.get("link", "")
-            if not url:
-                continue
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(self.BASE_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
             
-            results.append({
-                "rank": idx,
-                "url": url,
-                "domain": extract_root_domain(url),
-                "title": item.get("title", ""),
-                "snippet": item.get("snippet", "")
-            })
-        
-        logger.info(f"[SERP] Found {len(results)} results for '{keyword}'")
+        results = []
+        for idx, item in enumerate(data.get("items", []), start=1):
+            if item.get("link"):
+                results.append({
+                    "rank": idx,
+                    "url": item.get("link"),
+                    "domain": extract_root_domain(item.get("link")),
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", "")
+                })
         return results
-    
+
     @staticmethod
-    def _map_location_to_country_code(location: str) -> str:
-        """Map location names to Google country codes."""
-        location_map = {
-            "india": "in",
-            "united states": "us",
-            "usa": "us",
-            "uk": "uk",
-            "united kingdom": "uk",
-            "germany": "de",
-            "france": "fr",
-            "australia": "au",
-            "canada": "ca",
-        }
+    def _map_location(location: str) -> str:
+        location_map = {"india": "in", "united states": "us", "usa": "us", "uk": "uk", "united kingdom": "uk", "germany": "de", "france": "fr", "australia": "au", "canada": "ca"}
         return location_map.get(location.lower(), "in")
+
+
+class SerpApiFetcher(BaseFetcher):
+    """SerpApi.com fetcher"""
+    BASE_URL = "https://serpapi.com/search"
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        
+    async def search(self, keyword: str, num_results: int = 10, location: str = "India", language: str = "en") -> List[Dict]:
+        if not self.api_key:
+            raise ValueError("SerpApi not configured")
+            
+        params = {
+            "api_key": self.api_key,
+            "q": keyword,
+            "num": num_results,
+            "hl": language,
+            "gl": GoogleCSEFetcher._map_location(location),
+            "google_domain": "google.com",
+            "engine": "google"
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(self.BASE_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+        results = []
+        for idx, item in enumerate(data.get("organic_results", []), start=1):
+            if item.get("link"):
+                results.append({
+                    "rank": item.get("position", idx),
+                    "url": item.get("link"),
+                    "domain": extract_root_domain(item.get("link")),
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", "")
+                })
+        return results
+
+
+class SerperDevFetcher(BaseFetcher):
+    """Serper.dev fetcher"""
+    BASE_URL = "https://google.serper.dev/search"
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        
+    async def search(self, keyword: str, num_results: int = 10, location: str = "India", language: str = "en") -> List[Dict]:
+        if not self.api_key:
+            raise ValueError("Serper.dev not configured")
+            
+        headers = {
+            "X-API-KEY": self.api_key,
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "q": keyword,
+            "num": num_results,
+            "gl": GoogleCSEFetcher._map_location(location),
+            "hl": language
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(self.BASE_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+        results = []
+        for idx, item in enumerate(data.get("organic", []), start=1):
+            if item.get("link"):
+                results.append({
+                    "rank": item.get("position", idx),
+                    "url": item.get("link"),
+                    "domain": extract_root_domain(item.get("link")),
+                    "title": item.get("title", ""),
+                    "snippet": item.get("snippet", "")
+                })
+        return results
 
 
 # ==================== Competitor Discovery & Scoring ====================
@@ -562,12 +602,12 @@ async def analyze_competitors(
     final_top_competitors: int = 10,
     location: str = "India",
     language: str = "en",
-    min_similarity: float = 0.10
+    min_similarity: float = 0.10,
+    serp_api_key: Optional[str] = None,
+    serper_api_key: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Universal competitor analysis with business similarity validation.
-    
-    This is the main entry point for competitor discovery.
     
     Args:
         keywords: List of keywords to analyze (from Page 6)
@@ -579,30 +619,11 @@ async def analyze_competitors(
         location: Geographic location for search
         language: Language code
         min_similarity: Minimum similarity threshold (0.15 = 15%)
+        serp_api_key: Fallback 1 - SerpApi Key
+        serper_api_key: Fallback 2 - Serper.dev Key
         
     Returns:
-        {
-            "keywords_analyzed": int,
-            "user_business": {
-                "domain": str,
-                "description": str,
-                "accessible": bool
-            },
-            "top_competitors": [
-                {
-                    "domain": str,
-                    "score": float,
-                    "priority": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
-                    "frequency": int,
-                    "coverage": float,
-                    "similarity": float,
-                    "keywords_matched": [str],
-                    "avg_position": float
-                }
-            ],
-            "total_found": int,
-            "total_filtered": int
-        }
+        Dict with competitor data
     """
     # Validate input
     if not keywords:
@@ -630,24 +651,76 @@ async def analyze_competitors(
         else:
             logger.warning(f"[Competitor Analysis] Could not access user website, proceeding without similarity validation")
     
-    # Initialize fetcher
-    fetcher = GoogleCSEFetcher(google_cse_api_key, google_cse_cx)
+    # Initialize fetchers
+    fetchers = []
     
-    # Fetch SERP results for all keywords
+    # 1. Google CSE (Primary)
+    if google_cse_api_key and google_cse_cx:
+        fetchers.append(("Google CSE", GoogleCSEFetcher(google_cse_api_key, google_cse_cx)))
+    
+    # 2. SerpApi (Fallback 1)
+    if serp_api_key:
+        fetchers.append(("SerpApi", SerpApiFetcher(serp_api_key)))
+        
+    # 3. Serper.dev (Fallback 2)
+    if serper_api_key:
+        fetchers.append(("Serper.dev", SerperDevFetcher(serper_api_key)))
+        
+    if not fetchers:
+        raise ValueError("No search APIs configured (CSE, SerpApi, or Serper)")
+
+    # Fetch SERP results for all keywords using fallback logic per keyword OR globally
+    # Strategy: Try primary for all. If it fails (globally or 429), switch to next for ALL remaining.
+    
     serp_results = {}
-    for keyword in keywords:
-        try:
-            results = await fetcher.search(
-                keyword,
-                num_results=top_results_per_keyword,
-                location=location,
-                language=language
-            )
-            serp_results[keyword] = results
-        except Exception as e:
-            logger.error(f"[Competitor Analysis] Failed to fetch SERP for '{keyword}': {e}")
-            serp_results[keyword] = []
+    active_fetcher_idx = 0
     
+    # Try using the active fetcher for all keywords. If it fails, switch to next.
+    
+    while active_fetcher_idx < len(fetchers):
+        fetcher_name, fetcher_svc = fetchers[active_fetcher_idx]
+        logger.info(f"[Competitor Analysis] Using search provider: {fetcher_name}")
+        
+        failed_keywords = [k for k in keywords if k not in serp_results]
+        if not failed_keywords:
+            break
+            
+        success_count = 0
+        error_encountered = False
+        
+        for keyword in failed_keywords:
+            try:
+                results = await fetcher_svc.search(
+                    keyword,
+                    num_results=top_results_per_keyword,
+                    location=location,
+                    language=language
+                )
+                serp_results[keyword] = results
+                success_count += 1
+            except Exception as e:
+                logger.error(f"[Competitor Analysis] {fetcher_name} failed for '{keyword}': {e}")
+                # If it's a 429 or configured error, we might want to switch provider immediately
+                if "429" in str(e) or "quota" in str(e).lower():
+                    logger.warning(f"[Competitor Analysis] {fetcher_name} quota exceeded. Switching to fallback...")
+                    error_encountered = True
+                    break
+        
+        if error_encountered or success_count < len(failed_keywords):
+            # Move to next fetcher
+            active_fetcher_idx += 1
+        else:
+            # All done
+            break
+            
+    if not serp_results:
+        logger.error("[Competitor Analysis] All search providers failed.")
+        return {
+            "keywords_analyzed": 0,
+            "top_competitors": [],
+            "total_found": 0,
+        }
+
     # Discover competitors with filtering and similarity validation
     competitors = await discover_and_score_competitors(
         serp_results,
@@ -663,7 +736,7 @@ async def analyze_competitors(
         top_n=final_top_competitors
     )
     
-    logger.info(f"[Competitor Analysis] Found {len(top_competitors)} top competitors")
+    logger.info(f"[Competitor Analysis] Found {len(top_competitors)} top competitors from {len(serp_results)} keywords")
     
     return {
         "keywords_analyzed": len(keywords),
